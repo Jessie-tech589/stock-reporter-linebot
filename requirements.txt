@@ -1,0 +1,6 @@
+Flask==2.3.3
+line-bot-sdk==3.4.0
+yfinance==0.2.18
+requests==2.31.0
+APScheduler==3.10.4
+gunicorn==21.2.0
