@@ -9,14 +9,19 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage
 from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
 
-# LINE Bot 設定
-LINE_CHANNEL_ACCESS_TOKEN = "IB8yH/1Kx+Kn9SzazocKKvdJl1mfgAX7Y5cwQ6wN4B/hfXb9LlpE2Aqn3M73XDm+swFnCobwVe5tWZL/uttnINyP5c2+ur3mv3DSr6et/7d27QFBtwF0UUHPYb0SclDsoYTTp6aJg7ay2563yuBjfQdB04t89/10/w1cDnylIFU="
-LINE_CHANNEL_SECRET = "4dfc4614a1c360e2d60cf86fc28c03ce"
+# LINE Bot 設定 - 從環境變數讀取
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
+LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
 YOUR_USER_ID = "U35ee3690b802603dd7f285a67c698b53"  # 你的 User ID
 
 app = Flask(__name__)
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
+# 根路由 - 解決 404 問題
+@app.route("/", methods=['GET'])
+def home():
+    return "✅ 股市播報 LINE Bot 運作中！"
 
 # 股市資料抓取函數
 def get_us_stocks():
@@ -207,9 +212,9 @@ scheduler.add_job(send_evening_summary, 'cron', hour=21, minute=0, id='evening_s
 scheduler.start()
 atexit.register(lambda: scheduler.shutdown())
 
-# LINE Webhook 處理
-@app.route("/webhook", methods=['POST'])
-def webhook():
+# LINE Webhook 處理 - 修改為 /callback
+@app.route("/callback", methods=['POST'])
+def callback():
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
     
@@ -263,4 +268,6 @@ if __name__ == "__main__":
     print("  - 21:00 晚間總結")
     print("✅ Bot 已就緒，等待排程執行...")
     
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    # 使用環境變數的 PORT，如果沒有就使用 5000
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
