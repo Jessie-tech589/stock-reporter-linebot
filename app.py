@@ -2,19 +2,15 @@ import os
 import requests
 from datetime import datetime
 import pytz
-import yfinance as yf
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
-
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import json
 import datetime as dt
-
 from alpha_vantage.timeseries import TimeSeries
-import time
 
 app = Flask(__name__)
 
@@ -43,6 +39,28 @@ ADDRESSES = {
     "post_office": "台北市愛國東路216號"
 }
 
+# 台股中文名稱 ↔ 股票代碼對照表
+stock_name_map = {
+    "台積電": "2330",
+    "聯電": "2303",
+    "陽明": "2609",
+    "華航": "2610",
+    "長榮航": "2618",
+    "00918": "00918",
+    "00878": "00878",
+    "鴻準": "2354",
+    "大盤": "TAIEX"  # FinMind 台股大盤指數代碼
+}
+
+# 美股中文名稱 ↔ 股票代碼對照表
+us_stock_name_map = {
+    "輝達": "NVDA",
+    "美超微": "SMCI",
+    "google": "GOOGL"
+}
+
+# ==================== 核心功能函數 ====================
+
 def get_weather(location):
     api_key = os.environ.get('WEATHER_API_KEY', '')
     if not api_key:
@@ -65,49 +83,41 @@ def get_weather(location):
         print(f"天氣API錯誤: {str(e)}")
         return f"❌ {location}天氣\n\n取得資料失敗 ({str(e)})"
 
-def get_us_market():
+def get_taiwan_stock_info(code):
+    token = os.environ.get('FINMIND_TOKEN', '')
+    if not token:
+        return "FinMind API Token 未設定"
+    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id={code}&token={token}"
     try:
-        sp500 = yf.Ticker("^GSPC")
-        hist = sp500.history(period="1d")
-        if hist.empty:
-            return "📈 美股大盤資訊\n\n無法取得資料"
-        close_price = hist['Close'].iloc[-1]
-        return f"📈 美股大盤\n\n標普500指數: {close_price:.2f}"
+        res = requests.get(url)
+        data = res.json()
+        if data.get('status', 0) != 200 or not data.get('data'):
+            return f"{code}: 無法取得資料"
+        latest = data['data'][0]
+        return (
+            f"📈 台股 {'大盤' if code=='TAIEX' else '個股'}\n"
+            f"名稱: {'加權指數' if code=='TAIEX' else code}\n"
+            f"日期: {latest['date']}\n"
+            f"收盤價: {latest['close']}\n"
+            f"漲跌: {latest.get('spread', 'N/A')}\n"
+            f"成交量: {latest.get('Trading_Volume', 'N/A')}"
+        )
     except Exception as e:
-        return f"📈 美股大盤\n\n取得資料失敗 ({str(e)})"
+        return f"{code}: 取得資料失敗 ({str(e)})"
 
-def get_us_stock(symbol):
+def get_us_stock_info(symbol):
+    api_key = os.environ.get('ALPHA_VANTAGE_API_KEY', '')
+    if not api_key:
+        return "Alpha Vantage API金鑰未設定"
     try:
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(period="1d")
-        if hist.empty:
-            return f"📈 美股個股\n\n{symbol}: 無法取得資料"
-        close_price = hist['Close'].iloc[-1]
-        return f"📈 美股個股\n\n{symbol}: ${close_price:.2f}"
+        ts = TimeSeries(key=api_key, output_format='pandas')
+        data, _ = ts.get_quote_endpoint(symbol=symbol)
+        if '05. price' not in data.columns:
+            return f"{symbol}: 無法取得資料"
+        price = data['05. price'][0]
+        return f"📈 美股\n\n{symbol}: ${price}"
     except Exception as e:
-        return f"📈 美股個股\n\n{symbol}: 取得資料失敗 ({str(e)})"
-
-def get_taiwan_market():
-    try:
-        twii = yf.Ticker("^TWII")
-        hist = twii.history(period="1d")
-        if hist.empty:
-            return "📈 台股大盤\n\n無法取得資料"
-        close_price = hist['Close'].iloc[-1]
-        return f"📈 台股大盤\n\n加權指數: {int(close_price)}"
-    except Exception as e:
-        return f"📈 台股大盤\n\n取得資料失敗 ({str(e)})"
-
-def get_taiwan_stock(code):
-    try:
-        ticker = yf.Ticker(f"{code}.TW")
-        hist = ticker.history(period="1d")
-        if hist.empty:
-            return f"📈 台股個股\n\n{code}: 無法取得資料"
-        close_price = hist['Close'].iloc[-1]
-        return f"📈 台股個股\n\n{code}: {close_price:.2f}"
-    except Exception as e:
-        return f"📈 台股個股\n\n{code}: 取得資料失敗 ({str(e)})"
+        return f"{symbol}: 取得資料失敗 ({str(e)})"
 
 def get_news():
     return "📰 國內外新聞\n\n1. 台股創新高\n2. 美國科技股表現強勁\n\n(新聞API串接開發中...)"
@@ -166,7 +176,7 @@ def get_calendar():
 
 def get_morning_briefing():
     weather = get_weather("新店")
-    us_stocks = get_us_market()
+    us_stocks = get_us_stock_info("NVDA")
     calendar = get_calendar()
     return f"🌞 早安！\n\n{weather}\n\n{us_stocks}\n\n{calendar}"
 
@@ -176,7 +186,7 @@ def get_commute_to_work():
     return f"🚗 上班通勤資訊\n\n{weather}\n\n{traffic}"
 
 def get_market_open():
-    stocks = get_taiwan_market()
+    stocks = get_taiwan_stock_info("TAIEX")
     news = get_news()
     return f"📈 台股開盤\n\n{stocks}\n\n{news}"
 
@@ -218,9 +228,9 @@ def send_scheduled():
                     elif message_type == "market_open":
                         message = get_market_open()
                     elif message_type == "market_mid":
-                        message = get_taiwan_market()
+                        message = get_taiwan_stock_info("TAIEX")
                     elif message_type == "market_close":
-                        message = get_taiwan_market()
+                        message = get_taiwan_stock_info("TAIEX")
                     elif message_type == "evening_zhongzheng":
                         message = get_evening_zhongzheng()
                     elif message_type == "evening_xindian":
@@ -237,6 +247,10 @@ def send_scheduled():
     except Exception as e:
         print(f"定時推送錯誤: {str(e)}")
         return f"❌ 錯誤: {str(e)}"
+
+@app.route("/")
+def index():
+    return "OK"
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -260,23 +274,21 @@ def handle_message(event):
         elif user_message == "market_open":
             reply = get_market_open()
         elif user_message == "market_mid":
-            reply = get_taiwan_market()
+            reply = get_taiwan_stock_info("TAIEX")
         elif user_message == "market_close":
-            reply = get_taiwan_market()
+            reply = get_taiwan_stock_info("TAIEX")
         elif user_message == "evening_zhongzheng":
             reply = get_evening_zhongzheng()
         elif user_message == "evening_xindian":
             reply = get_evening_xindian()
-        elif user_message == "美股" or user_message == "美股大盤":
-            reply = get_us_market()
-        elif user_message.startswith("美股 "):
-            symbol = user_message.split(" ")[1].strip().upper()
-            reply = get_us_stock(symbol)
-        elif user_message == "台股" or user_message == "台股大盤":
-            reply = get_taiwan_market()
         elif user_message.startswith("台股 "):
-            code = user_message.split(" ")[1].strip()
-            reply = get_taiwan_stock(code)
+            name = user_message.split(" ")[1].strip()
+            code = stock_name_map.get(name, name)
+            reply = get_taiwan_stock_info(code)
+        elif user_message.startswith("美股 "):
+            name = user_message.split(" ")[1].strip().lower()
+            symbol = us_stock_name_map.get(name, name.upper())
+            reply = get_us_stock_info(symbol)
         elif user_message == "新聞":
             reply = get_news()
         elif user_message == "車流":
