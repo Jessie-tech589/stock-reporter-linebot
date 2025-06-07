@@ -13,7 +13,8 @@ from googleapiclient.discovery import build
 import json
 import datetime as dt
 
-from alpha_vantage.timeseries import TimeSeries  # <-- 新增這行
+from alpha_vantage.timeseries import TimeSeries
+import time  # 新增這行
 
 app = Flask(__name__)
 
@@ -73,19 +74,26 @@ def get_us_stocks():
     if not API_KEY:
         return "Alpha Vantage API金鑰未設定"
     stocks = ["NVDA", "SMCI", "GOOGL", "AAPL", "MSFT"]
-    result = "📈 美股資訊（Alpha Vantage）\n"
+    result = "📈 美股資訊\n"
     ts = TimeSeries(key=API_KEY, output_format='pandas')
     for symbol in stocks:
         try:
             data, _ = ts.get_quote_endpoint(symbol=symbol)
-            price = data['05. price'][0]
-            result += f"{symbol}: ${price}\n"
+            # 檢查是否有價格欄位（若被API限制會回傳空或錯誤）
+            if '05. price' not in data.columns:
+                result += f"{symbol}: 取得資料失敗 (API限制或無資料)\n"
+            else:
+                price = data['05. price'][0]
+                result += f"{symbol}: ${price}\n"
         except Exception as e:
             result += f"{symbol}: 取得資料失敗 ({str(e)})\n"
+        time.sleep(12)  # Alpha Vantage免費版每分鐘最多5次，每次查詢間隔12秒
     return result
 
 def get_taiwan_market():
     """取得台股大盤與重要個股資訊（yfinance）"""
+    result = ""
+    # 取得大盤指數
     try:
         twii = yf.Ticker("^TWII")
         hist = twii.history(period="1d")
@@ -95,24 +103,26 @@ def get_taiwan_market():
             twii_price = int(hist['Close'].iloc[-1])
     except Exception as e:
         twii_price = f"錯誤: {str(e)}"
+    result = f"📈 台股大盤\n加權指數: {twii_price}\n\n"
 
+    # 取得重要個股
     stocks = [
         ("台積電", "2330.TW"),
         ("鴻海", "2317.TW"),
         ("聯發科", "2454.TW")
     ]
-    result = f"📈 台股大盤\n加權指數: {twii_price}\n\n"
     for name, code in stocks:
         try:
             ticker = yf.Ticker(code)
             hist = ticker.history(period="1d")
             if hist.empty:
                 result += f"{name}: 無資料\n"
-                continue
-            close_price = hist['Close'].iloc[-1]
-            result += f"{name}: {close_price:.2f}\n"
+            else:
+                close_price = hist['Close'].iloc[-1]
+                result += f"{name}: {close_price:.2f}\n"
         except Exception as e:
             result += f"{name}: 取得資料失敗 ({str(e)})\n"
+        time.sleep(3)  # 台股查詢間隔3秒，避免被網站封鎖
     return result
 
 def get_taiwan_stocks():
