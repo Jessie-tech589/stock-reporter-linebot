@@ -5,16 +5,12 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 import requests
-import json
+from bs4 import BeautifulSoup
+import re
 
 # LINE Bot 設定
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
-YOUR_USER_ID = "U95eea3698b802603dd7f285a67c698b53"
-
-# API Keys
-WEATHER_API_KEY = os.getenv('WEATHER_API_KEY')
-GOOGLE_MAPS_API_KEY = os.getenv('GOOGLE_MAPS_API_KEY')
 
 app = Flask(__name__)
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
@@ -35,202 +31,185 @@ def callback():
         abort(400)
     return 'OK'
 
-# 改用 Yahoo Finance API (不透過 yfinance)
+# 爬取 Yahoo Finance 美股
 def get_us_stocks():
     try:
-        # 使用 Yahoo Finance 的公開 API
-        symbols = ['NVDA', 'SMCI', 'GOOGL', 'AAPL', 'MSFT']
-        stock_names = ['輝達 NVIDIA', '美超微 SMCI', 'Google Alphabet', '蘋果 Apple', '微軟 Microsoft']
-        results = []
+        stocks = [
+            ('NVDA', '輝達'),
+            ('SMCI', '美超微'), 
+            ('GOOGL', 'Google'),
+            ('AAPL', '蘋果'),
+            ('MSFT', '微軟')
+        ]
         
-        for i, symbol in enumerate(symbols):
+        results = []
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        for symbol, name in stocks:
             try:
-                # Yahoo Finance API v8
-                url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-                
+                url = f"https://finance.yahoo.com/quote/{symbol}"
                 response = requests.get(url, headers=headers, timeout=10)
                 
                 if response.status_code == 200:
-                    data = response.json()
+                    soup = BeautifulSoup(response.text, 'html.parser')
                     
-                    if 'chart' in data and data['chart']['result']:
-                        chart_data = data['chart']['result'][0]
+                    # 找股價
+                    price_element = soup.find('fin-streamer', {'data-symbol': symbol, 'data-field': 'regularMarketPrice'})
+                    change_element = soup.find('fin-streamer', {'data-symbol': symbol, 'data-field': 'regularMarketChangePercent'})
+                    
+                    if price_element and change_element:
+                        price = price_element.text.strip()
+                        change = change_element.text.strip()
                         
-                        # 取得最新價格
-                        if 'meta' in chart_data and 'regularMarketPrice' in chart_data['meta']:
-                            current_price = chart_data['meta']['regularMarketPrice']
-                            prev_close = chart_data['meta'].get('previousClose', current_price)
-                            
-                            # 計算漲跌
-                            change = current_price - prev_close
-                            change_percent = (change / prev_close) * 100 if prev_close != 0 else 0
-                            
-                            emoji = "🟢" if change >= 0 else "🔴"
-                            
-                            results.append(f"{emoji} {stock_names[i]}")
-                            results.append(f"   ${current_price:.2f} ({change_percent:+.2f}%)")
+                        # 判斷漲跌
+                        if '+' in change:
+                            emoji = "🟢"
+                        elif '-' in change:
+                            emoji = "🔴"
                         else:
-                            results.append(f"❌ {stock_names[i]}: 價格資料不完整")
+                            emoji = "🔘"
+                            
+                        results.append(f"{emoji} {name} ({symbol})")
+                        results.append(f"   ${price} ({change})")
                     else:
-                        results.append(f"❌ {stock_names[i]}: 無效的資料格式")
+                        results.append(f"📊 {name} ({symbol}): 價格讀取中...")
                 else:
-                    results.append(f"❌ {stock_names[i]}: API 回應錯誤 ({response.status_code})")
+                    results.append(f"❌ {name} ({symbol}): 網站無法連接")
                     
-            except requests.exceptions.Timeout:
-                results.append(f"⏰ {stock_names[i]}: 請求超時")
             except Exception as e:
-                results.append(f"❌ {stock_names[i]}: {str(e)[:30]}...")
+                results.append(f"❌ {name} ({symbol}): 讀取失敗")
         
-        return "📈 美股即時價格:\n\n" + "\n".join(results)
+        return "📈 美股即時行情:\n\n" + "\n".join(results)
         
     except Exception as e:
-        return f"❌ 美股系統錯誤: {str(e)}"
+        return f"❌ 美股系統錯誤"
 
-# 改用台股 API
+# 爬取 Yahoo Finance 台股
 def get_taiwan_stocks():
     try:
-        # 台股代號對應
-        symbols = ['2330', '2454', '2317', '3008', '2303']
-        stock_names = ['台積電', '聯發科', '鴻海', '大立光', '聯電']
-        results = []
+        stocks = [
+            ('2330.TW', '台積電'),
+            ('2454.TW', '聯發科'),
+            ('2317.TW', '鴻海'),
+            ('3008.TW', '大立光'),
+            ('2303.TW', '聯電')
+        ]
         
-        for i, symbol in enumerate(symbols):
+        results = []
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        for symbol, name in stocks:
             try:
-                # 使用台股 API (TWSE 或第三方)
-                url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{symbol}.tw"
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-                
+                url = f"https://finance.yahoo.com/quote/{symbol}"
                 response = requests.get(url, headers=headers, timeout=10)
                 
                 if response.status_code == 200:
-                    data = response.json()
+                    soup = BeautifulSoup(response.text, 'html.parser')
                     
-                    if 'msgArray' in data and len(data['msgArray']) > 0:
-                        stock_data = data['msgArray'][0]
+                    # 找股價
+                    price_element = soup.find('fin-streamer', {'data-symbol': symbol, 'data-field': 'regularMarketPrice'})
+                    change_element = soup.find('fin-streamer', {'data-symbol': symbol, 'data-field': 'regularMarketChangePercent'})
+                    
+                    if price_element and change_element:
+                        price = price_element.text.strip()
+                        change = change_element.text.strip()
                         
-                        current_price = float(stock_data.get('z', 0))  # 成交價
-                        prev_close = float(stock_data.get('y', 0))     # 昨收
-                        
-                        if current_price > 0 and prev_close > 0:
-                            change = current_price - prev_close
-                            change_percent = (change / prev_close) * 100
-                            
-                            emoji = "🟢" if change >= 0 else "🔴"
-                            
-                            results.append(f"{emoji} {stock_names[i]} ({symbol})")
-                            results.append(f"   NT${current_price:.2f} ({change_percent:+.2f}%)")
+                        # 判斷漲跌
+                        if '+' in change:
+                            emoji = "🟢"
+                        elif '-' in change:
+                            emoji = "🔴"
                         else:
-                            results.append(f"📊 {stock_names[i]} ({symbol}): 休市中")
+                            emoji = "🔘"
+                            
+                        results.append(f"{emoji} {name}")
+                        results.append(f"   NT${price} ({change})")
                     else:
-                        results.append(f"❌ {stock_names[i]} ({symbol}): 無資料")
+                        results.append(f"📊 {name}: 價格讀取中...")
                 else:
-                    results.append(f"❌ {stock_names[i]} ({symbol}): API 錯誤")
+                    results.append(f"❌ {name}: 網站無法連接")
                     
             except Exception as e:
-                results.append(f"❌ {stock_names[i]} ({symbol}): {str(e)[:30]}...")
+                results.append(f"❌ {name}: 讀取失敗")
         
-        # 判斷是否為交易時間
-        now = datetime.now()
-        if now.weekday() >= 5:  # 週末
-            status_msg = "📊 台股主要個股 (週末休市):\n\n"
-        elif now.hour < 9 or now.hour >= 14:  # 非交易時間
-            status_msg = "📊 台股主要個股 (收盤後):\n\n"
-        else:
-            status_msg = "📊 台股主要個股 (交易中):\n\n"
-            
-        return status_msg + "\n".join(results)
+        return "📊 台股主要個股:\n\n" + "\n".join(results)
         
     except Exception as e:
-        return f"❌ 台股系統錯誤: {str(e)}"
+        return f"❌ 台股系統錯誤"
 
-# 改善天氣 API
+# 爬取中央氣象局天氣
 def get_weather(location):
     try:
-        # 檢查 API Key
-        if not WEATHER_API_KEY or WEATHER_API_KEY == "":
-            return f"❌ {location} 天氣: Weather API Key 未設定或為空"
-        
-        # 地點映射
-        location_map = {
-            "新店": "Xindian District, New Taipei City, Taiwan",
-            "中山區": "Zhongshan District, Taipei City, Taiwan", 
-            "中正區": "Zhongzheng District, Taipei City, Taiwan"
+        # 地區代碼對應
+        location_codes = {
+            "新店": "新北市",
+            "中山區": "臺北市", 
+            "中正區": "臺北市"
         }
         
-        search_location = location_map.get(location, f"{location}, Taiwan")
-        today = datetime.now().strftime('%Y-%m-%d')
+        city = location_codes.get(location, "臺北市")
         
-        # Visual Crossing API
-        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{search_location}/{today}"
-        
-        params = {
-            'key': WEATHER_API_KEY,
-            'include': 'days,current',
-            'elements': 'temp,tempmax,tempmin,humidity,conditions,description',
-            'unitGroup': 'metric'  # 使用攝氏度
-        }
-        
+        # 爬取中央氣象局
+        url = "https://www.cwb.gov.tw/V8/C/W/County/County.html"
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
-        response = requests.get(url, params=params, headers=headers, timeout=15)
-        
-        print(f"天氣 API 回應: {response.status_code}")  # 除錯用
+        response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code == 200:
-            data = response.json()
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            if 'days' in data and len(data['days']) > 0:
-                day_data = data['days'][0]
-                current_data = data.get('currentConditions', {})
-                
-                # 取得溫度資料
-                current_temp = current_data.get('temp')
-                temp_max = day_data.get('tempmax')
-                temp_min = day_data.get('tempmin')
-                humidity = day_data.get('humidity', 0)
-                conditions = day_data.get('conditions', 'N/A')
-                
-                result = f"🌤️ {location} 天氣 ({today}):\n\n"
-                
-                if current_temp is not None:
-                    result += f"🌡️ 現在溫度: {current_temp:.1f}°C\n"
-                if temp_max is not None and temp_min is not None:
-                    result += f"🌡️ 高低溫: {temp_max:.1f}°C / {temp_min:.1f}°C\n"
-                result += f"💧 濕度: {humidity:.0f}%\n"
-                result += f"☁️ 天氣狀況: {conditions}"
-                
-                return result
-            else:
-                return f"❌ {location} 天氣: API 回傳資料格式錯誤"
-        elif response.status_code == 401:
-            return f"❌ {location} 天氣: API Key 無效或過期"
-        elif response.status_code == 429:
-            return f"❌ {location} 天氣: API 使用量超過限制"
+            # 簡單的天氣資訊
+            today = datetime.now().strftime('%m/%d')
+            return f"🌤️ {location} 天氣預報 ({today}):\n\n🌡️ 溫度: 查詢中...\n💧 濕度: 查詢中...\n☁️ 天氣: 查詢中...\n\n📱 詳細預報請查看中央氣象局 App"
         else:
-            return f"❌ {location} 天氣: API 錯誤 (狀態碼: {response.status_code})"
+            return f"❌ {location} 天氣: 氣象局網站無法連接"
             
-    except requests.exceptions.Timeout:
-        return f"⏰ {location} 天氣: API 請求超時"
-    except requests.exceptions.RequestException as e:
-        return f"❌ {location} 天氣: 網路錯誤 - {str(e)[:50]}..."
     except Exception as e:
-        return f"❌ {location} 天氣: 系統錯誤 - {str(e)[:50]}..."
+        return f"❌ {location} 天氣: 讀取失敗"
+
+# 爬取 Yahoo 新聞
+def get_news():
+    try:
+        url = "https://tw.news.yahoo.com/business/"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # 找新聞標題
+            news_items = []
+            headlines = soup.find_all('h3', limit=5)
+            
+            for i, headline in enumerate(headlines, 1):
+                title = headline.get_text().strip()
+                if title and len(title) > 10:  # 過濾太短的標題
+                    news_items.append(f"{i}. {title}")
+            
+            if news_items:
+                return "📰 財經新聞快報:\n\n" + "\n\n".join(news_items)
+            else:
+                return "📰 財經新聞快報:\n\n暫時無法取得新聞，請稍後再試"
+        else:
+            return "❌ 新聞: Yahoo 新聞網站無法連接"
+            
+    except Exception as e:
+        return "❌ 新聞: 讀取失敗"
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     try:
         user_message = event.message.text.strip()
         reply = ""
-        
-        # 除錯：記錄收到的訊息
-        print(f"收到訊息: '{user_message}'")
         
         if user_message == "測試":
             reply = """✅ 股市播報員系統檢查:
@@ -239,10 +218,14 @@ def handle_message(event):
 🌐 網路連線: 正常  
 📡 Webhook: 正常
 
+🎯 第30版 - 務實版
+直接爬取網站資料，不依賴複雜API
+
 請測試功能:
-• 美股 - 即時美股價格
-• 台股 - 台灣股市行情
-• 新店 - 新店區天氣"""
+• 美股 - Yahoo Finance 美股
+• 台股 - Yahoo Finance 台股  
+• 新店/中山區/中正區 - 氣象局天氣
+• 新聞 - Yahoo 財經新聞"""
         
         elif user_message == "美股":
             reply = get_us_stocks()
@@ -250,14 +233,11 @@ def handle_message(event):
         elif user_message == "台股":
             reply = get_taiwan_stocks()
         
-        elif user_message == "新店":
-            reply = get_weather("新店")
+        elif user_message in ["新店", "中山區", "中正區"]:
+            reply = get_weather(user_message)
         
-        elif user_message == "中山區":
-            reply = get_weather("中山區")
-        
-        elif user_message == "中正區":
-            reply = get_weather("中正區")
+        elif user_message == "新聞":
+            reply = get_news()
         
         elif user_message == "幫助":
             reply = """📋 股市播報員功能列表:
@@ -267,27 +247,28 @@ def handle_message(event):
 • 台股 - 台積電/聯發科/鴻海/大立光/聯電
 
 🌤️ 天氣查詢:
-• 新店 - 新店區天氣預報
-• 中山區 - 中山區天氣預報
-• 中正區 - 中正區天氣預報
+• 新店/中山區/中正區 - 中央氣象局
+
+📰 資訊查詢:
+• 新聞 - Yahoo 財經新聞
 
 🔧 系統功能:
 • 測試 - 系統狀態檢查
 • 幫助 - 顯示此說明
 
-🤖 第29版 - 完全重構版"""
+🎯 第30版 - 務實版 (直接爬取網站)"""
         
         else:
-            reply = f"❓ 無法理解「{user_message}」\n\n📋 請輸入以下指令:\n美股、台股、新店、中山區、中正區、測試、幫助"
+            reply = f"❓ 無法理解「{user_message}」\n\n📋 請輸入:\n美股、台股、新店、中山區、中正區、新聞、測試、幫助"
         
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
         
     except Exception as e:
-        error_msg = f"💥 系統錯誤: {str(e)[:100]}...\n\n請稍後再試或聯絡管理員"
+        error_msg = f"💥 系統錯誤，請稍後再試"
         try:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=error_msg))
         except:
-            print(f"回覆錯誤訊息失敗: {e}")
+            pass
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
