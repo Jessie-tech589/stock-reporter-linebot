@@ -6,3 +6,6 @@ APScheduler==3.10.4
 pytz
 yfinance
 twstock
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
