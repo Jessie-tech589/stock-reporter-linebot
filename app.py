@@ -24,7 +24,7 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 def home():
     return "🟢 股市播報員 LINE Bot 運作中！"
 
-@app.route("/", methods=['POST'])
+@app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
