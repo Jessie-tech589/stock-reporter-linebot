@@ -2,12 +2,12 @@ import os
 import requests
 from datetime import datetime
 import pytz
+import json
+import yfinance as yf
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
-import yfinance as yf
-import twstock
 
 app = Flask(__name__)
 
@@ -39,17 +39,28 @@ ADDRESSES = {
 # ==================== 核心功能函數 ====================
 
 def get_weather(location):
-    """取得指定地區天氣"""
+    """取得指定地區天氣（中央氣象局API）"""
+    api_key = os.environ.get('WEATHER_API_KEY', '')
+    url = f"https://opendata.cwb.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization={api_key}&locationName={location}"
     try:
-        taiwan_time = datetime.now(TAIWAN_TZ)
-        current_time = taiwan_time.strftime('%m/%d %H:%M')
-        weather_data = f"☀️ {location}天氣 ({current_time}):\n\n🌡️ 溫度: 25°C\n💨 微風\n☁️ 多雲\n🌧️ 降雨機率: 20%\n\n⚠️ 氣象局API整合開發中..."
-        return weather_data
+        res = requests.get(url)
+        data = res.json()
+        weather = data.get('records', {}).get('location', [])
+        if not weather:
+            return f"❌ {location}天氣資料取得失敗"
+        wx = weather[0].get('weatherElement', [])
+        if not wx:
+            return f"❌ {location}天氣資料格式錯誤"
+        pop = wx[0]['time'][0]['parameter']['parameterName']  # 降雨機率
+        temp = wx[4]['time'][0]['parameter']['parameterName'] # 溫度
+        desc = wx[3]['time'][0]['parameter']['parameterName'] # 天氣描述
+        return f"☀️ {location}天氣\n\n🌡️ 溫度: {temp}°C\n💧 降雨機率: {pop}%\n☁️ 天氣: {desc}\n\n資料來源: 中央氣象局"
     except Exception as e:
-        return f"❌ {location}天氣查詢失敗: {str(e)}"
+        print(f"天氣API錯誤: {str(e)}")
+        return f"❌ {location}天氣資料取得失敗 ({str(e)})"
 
 def get_us_stocks():
-    """取得美股資訊"""
+    """取得美股資訊（yfinance）"""
     stocks = ["NVDA", "SMCI", "GOOGL", "AAPL", "MSFT"]
     result = "📈 美股資訊\n"
     for stock in stocks:
@@ -60,37 +71,58 @@ def get_us_stocks():
                 result += f"{stock}: 無資料\n"
                 continue
             close_price = hist['Close'].iloc[-1]
-            after_hours_price = close_price  # 模擬盤後價
+            # yfinance無法直接取得盤後價，這裡用收盤價模擬
+            after_hours_price = close_price
             result += f"{stock}: 收盤價 ${close_price:.2f} (盤後 ${after_hours_price:.2f})\n"
         except Exception as e:
-            result += f"{stock}: 取得資料失敗\n"
+            result += f"{stock}: 取得資料失敗 ({str(e)})\n"
     return result
 
 def get_taiwan_stocks():
-    """取得台股資訊"""
+    """取得台股資訊（Yahoo股市API）"""
     try:
-        index = twstock.Index()
-        index_data = index.get('tse')
-        if not index_data:
+        url = "https://tw.stock.yahoo.com/_td-stock/api/resource/StockServices.stockList;fields=symbol,name,price,change,percent?symbol=^TWII"
+        res = requests.get(url)
+        data = res.json()
+        if not data.get('data'):
             return "📈 台股資訊\n\n無法取得資料"
-        latest = index_data[-1]
-        return f"📈 台股資訊\n\n加權指數: {latest.price}\n漲跌幅: {latest.change}%\n時間: {latest.time}"
+        twii = data['data'][0]
+        price = twii['price']
+        change = twii['change']
+        percent = twii['percent']
+        return f"📈 台股資訊\n\n加權指數: {price}\n漲跌幅: {change} ({percent})\n資料來源: Yahoo股市"
     except Exception as e:
-        return f"📈 台股資訊\n\n取得資料失敗: {str(e)}"
+        print(f"台股API錯誤: {str(e)}")
+        return f"📈 台股資訊\n\n取得資料失敗 ({str(e)})"
 
 def get_news():
-    """取得新聞資訊"""
-    return "📰 國內外新聞\n\n1. 台股創新高\n2. 美國科技股表現強勁\n\n(實際API串接開發中...)"
+    """取得新聞資訊（範例，可自行串接新聞API）"""
+    return "📰 國內外新聞\n\n1. 台股創新高\n2. 美國科技股表現強勁\n\n(新聞API串接開發中...)"
 
 def get_traffic(from_place="home", to_place="office"):
-    """取得車流資訊"""
+    """取得車流資訊（Google Maps API，需金鑰）"""
+    api_key = os.environ.get('GOOGLE_MAPS_API_KEY', '')
+    if not api_key:
+        return "🚗 車流資訊\n\n(Google Maps API金鑰未設定)"
     from_addr = ADDRESSES.get(from_place, from_place)
     to_addr = ADDRESSES.get(to_place, to_place)
-    return f"🚗 車流資訊 ({from_place} → {to_place})\n\n{from_addr} → {to_addr}\n\n預計時間: 30分鐘\n\n(實際API串接開發中...)"
+    try:
+        url = f"https://maps.googleapis.com/maps/api/directions/json?origin={from_addr}&destination={to_addr}&key={api_key}"
+        res = requests.get(url)
+        data = res.json()
+        if data.get('status') != 'OK':
+            return f"🚗 車流資訊\n\n({from_place} → {to_place})\n\n無法取得路線"
+        route = data['routes'][0]['legs'][0]
+        duration = route['duration']['text']
+        distance = route['distance']['text']
+        return f"🚗 車流資訊\n\n{from_place} → {to_place}\n\n預計時間: {duration}\n距離: {distance}\n\n資料來源: Google Maps"
+    except Exception as e:
+        print(f"車流API錯誤: {str(e)}")
+        return f"🚗 車流資訊\n\n取得資料失敗 ({str(e)})"
 
 def get_calendar():
-    """取得行事曆與節日"""
-    return "📅 今日行程\n\n• 09:00 會議\n• 14:00 客戶拜訪\n\n🎉 今日節日: 無\n\n(實際API串接開發中...)"
+    """取得行事曆與節日（範例，需Google Calendar API）"""
+    return "📅 今日行程\n\n• 09:00 會議\n• 14:00 客戶拜訪\n\n🎉 今日節日: 無\n\n(Google Calendar API串接開發中...)"
 
 def get_morning_briefing():
     """早安綜合資訊"""
@@ -171,6 +203,7 @@ def send_scheduled():
 
         return 'OK'
     except Exception as e:
+        print(f"定時推送錯誤: {str(e)}")
         return f"❌ 錯誤: {str(e)}"
 
 # ==================== LINE Bot 處理 ====================
