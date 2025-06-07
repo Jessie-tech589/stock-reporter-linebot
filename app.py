@@ -10,6 +10,7 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+import json
 import datetime as dt
 
 app = Flask(__name__)
@@ -56,10 +57,9 @@ def get_weather(location):
         wx = weather[0].get('weatherElement', [])
         if not wx:
             return f"❌ {location}天氣\n\n資料格式錯誤"
-        # 降雨機率、溫度、天氣描述
-        pop = wx[0]['time'][0]['parameter']['parameterName']
-        temp = wx[4]['time'][0]['parameter']['parameterName']
-        desc = wx[3]['time'][0]['parameter']['parameterName']
+        pop = wx[0]['time'][0]['parameter']['parameterName']  # 降雨機率
+        temp = wx[4]['time'][0]['parameter']['parameterName'] # 溫度
+        desc = wx[3]['time'][0]['parameter']['parameterName'] # 天氣描述
         return f"☀️ {location}天氣\n\n🌡️ 溫度: {temp}°C\n💧 降雨機率: {pop}%\n☁️ 天氣: {desc}\n\n資料來源: 中央氣象局"
     except Exception as e:
         print(f"天氣API錯誤: {str(e)}")
@@ -84,7 +84,6 @@ def get_us_stocks():
 
 def get_taiwan_market():
     """取得台股大盤與重要個股資訊（yfinance）"""
-    # 取得大盤指數
     try:
         twii = yf.Ticker("^TWII")
         hist = twii.history(period="1d")
@@ -95,7 +94,6 @@ def get_taiwan_market():
     except Exception as e:
         twii_price = f"錯誤: {str(e)}"
 
-    # 取得重要個股
     stocks = [
         ("台積電", "2330.TW"),
         ("鴻海", "2317.TW"),
@@ -147,8 +145,11 @@ def get_traffic(from_place="home", to_place="office"):
 def get_google_calendar_events():
     SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
     try:
-        creds = service_account.Credentials.from_service_account_file(
-            'credentials.json', scopes=SCOPES)
+        creds_json = os.environ.get('GOOGLE_CREDS_JSON')
+        if not creds_json:
+            return "Google Calendar API金鑰未設定，請設定環境變數 GOOGLE_CREDS_JSON"
+        creds_dict = json.loads(creds_json)
+        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         service = build('calendar', 'v3', credentials=creds)
         now = dt.datetime.utcnow().isoformat() + 'Z'  # 'Z' 代表 UTC 時間
         events_result = service.events().list(
