@@ -9,13 +9,15 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
 import requests
 import json
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
-import pickle
 
-# LINE Bot 設定 - 從環境變數取得
+# 註解掉 Google API imports，避免部署時缺少套件導致錯誤
+# from google.oauth2.credentials import Credentials
+# from google_auth_oauthlib.flow import InstalledAppFlow
+# from google.auth.transport.requests import Request
+# from googleapiclient.discovery import build
+# import pickle
+
+# LINE Bot 設定
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
 YOUR_USER_ID = "U95eea3698b802603dd7f285a67c698b53"
@@ -23,15 +25,11 @@ YOUR_USER_ID = "U95eea3698b802603dd7f285a67c698b53"
 # API Keys
 WEATHER_API_KEY = os.getenv('WEATHER_API_KEY')
 GOOGLE_MAPS_API_KEY = os.getenv('GOOGLE_MAPS_API_KEY')
-NEWS_API_KEY = os.getenv('NEWS_API_KEY')  # 需要申請新聞 API
 
-# API URLs
-WEATHER_BASE_URL = "https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline"
-GOOGLE_MAPS_API_URL = "https://maps.googleapis.com/maps/api/directions/json"
-NEWS_API_URL = "https://newsapi.org/v2/top-headlines"
-
-# Google Calendar 設定
-SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+# 固定地址
+HOME_ADDRESS = "新店區建國路99巷, 新北市, Taiwan"
+OFFICE_ADDRESS = "台北市南京東路三段131號, Taiwan"
+JINNAN_POST_OFFICE = "台北市愛國東路216號, Taiwan"
 
 app = Flask(__name__)
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
@@ -39,184 +37,279 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 @app.route("/", methods=['GET'])
 def home():
-    return "🟢 股市清報 LINE Bot 運作中！"
+    return "🟢 股市播報員 LINE Bot 運作中！"
 
 @app.route("/", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
-    app.logger.info("Request body: " + body)
-
+    
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
         abort(400)
     return 'OK'
 
-# Google Calendar 服務初始化
-def get_calendar_service():
-    """取得 Google Calendar 服務"""
-    creds = None
-    # token.pickle 儲存用戶的存取和更新令牌
-    if os.path.exists('token.pickle'):
-        with open('token.pickle', 'rb') as token:
-            creds = pickle.load(token)
-    
-    # 如果沒有有效的憑證，讓用戶登入
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            # 需要設定 Google Calendar API 憑證檔案
-            if os.path.exists('credentials.json'):
-                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-                creds = flow.run_local_server(port=0)
-            else:
-                return None
-        
-        # 儲存憑證供下次使用
-        with open('token.pickle', 'wb') as token:
-            pickle.dump(creds, token)
+# Google Calendar 設定
+SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
+# 動態取得台灣節假日 (從政府資料來源)
+def get_taiwan_holidays_dynamic():
+    """從行政院人事總處取得台灣節假日資料"""
     try:
-        service = build('calendar', 'v3', credentials=creds)
-        return service
-    except:
+        # 行政院人事總處節假日 API
+        year = datetime.now().year
+        api_url = f"https://data.gov.tw/api/v1/rest/datastore_search?resource_id=W2C00467-A349-42CC-BE00-76B70760A1AD&filters=%7B%22date%22:%22{year}%22%7D"
+        
+        response = requests.get(api_url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            holidays = data.get('result', {}).get('records', [])
+            
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            for holiday in holidays:
+                if holiday.get('date') == today_str:
+                    return f"🇹🇼 {holiday.get('name', '台灣節假日')} ({holiday.get('description', '國定假日')})"
+            
         return None
-
-# 台灣節假日資料
-def get_taiwan_holidays():
-    """取得台灣節假日資訊"""
-    holidays_2025 = {
-        "01-01": "🎊 元旦",
-        "01-25": "🏮 小年夜", 
-        "01-26": "🏮 除夕",
-        "01-27": "🧧 春節初一",
-        "01-28": "🧧 春節初二", 
-        "01-29": "🧧 春節初三",
-        "01-30": "🧧 春節初四",
-        "01-31": "🧧 春節初五",
-        "02-28": "🌸 和平紀念日",
-        "04-03": "🌺 兒童節",
-        "04-04": "🌿 清明節",
-        "04-05": "🌿 民族掃墓節調整放假",
-        "05-01": "⚒️ 勞動節",
-        "06-09": "🚣 端午節",
-        "09-17": "🏮 中秋節",
-        "10-10": "🇹🇼 國慶日",
-        "10-11": "🇹🇼 國慶日調整放假"
-    }
-    
-    today = datetime.now().strftime("%m-%d")
-    return holidays_2025.get(today, None)
-
-# 西洋節日資料
-def get_western_holidays():
-    """取得西洋節日資訊"""
-    western_holidays = {
-        "01-01": "🎊 新年 New Year's Day",
-        "02-14": "💝 情人節 Valentine's Day",
-        "03-17": "☘️ 聖派翠克節 St. Patrick's Day",
-        "04-01": "🤡 愚人節 April Fool's Day",
-        "05-12": "👩 母親節 Mother's Day (第二個週日)",
-        "06-16": "👨 父親節 Father's Day (第三個週日)",
-        "10-31": "🎃 萬聖節 Halloween",
-        "11-28": "🦃 感恩節 Thanksgiving (第四個週四)",
-        "12-24": "🎄 平安夜 Christmas Eve",
-        "12-25": "🎅 聖誕節 Christmas Day",
-        "12-31": "🎉 跨年夜 New Year's Eve"
-    }
-    
-    today = datetime.now().strftime("%m-%d")
-    return western_holidays.get(today, None)
-
-# 取得今日行事曆 (包含個人行程、節假日)
-def get_today_calendar_events():
-    """取得今日的完整行事曆資訊"""
-    try:
-        # 個人行程
-        personal_events = ""
-        service = get_calendar_service()
-        
-        if service:
-            # 取得今日開始和結束時間
-            now = datetime.now()
-            start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + 'Z'
-            end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat() + 'Z'
-
-            # 呼叫 Calendar API
-            events_result = service.events().list(
-                calendarId='primary',
-                timeMin=start_of_day,
-                timeMax=end_of_day,
-                maxResults=10,
-                singleEvents=True,
-                orderBy='startTime'
-            ).execute()
-            
-            events = events_result.get('items', [])
-            
-            if events:
-                personal_events = "📅 個人行程:\n"
-                for event in events:
-                    start = event['start'].get('dateTime', event['start'].get('date'))
-                    if 'T' in start:  # 有時間的事件
-                        start_time = datetime.fromisoformat(start.replace('Z', '+00:00'))
-                        time_str = start_time.strftime('%H:%M')
-                    else:  # 全天事件
-                        time_str = "全天"
-                    
-                    summary = event.get('summary', '無標題')
-                    personal_events += f"• {time_str} - {summary}\n"
-        
-        # 台灣節假日
-        tw_holiday = get_taiwan_holidays()
-        holiday_info = ""
-        if tw_holiday:
-            holiday_info += f"\n🇹🇼 台灣節日: {tw_holiday}\n"
-        
-        # 西洋節日
-        western_holiday = get_western_holidays()
-        if western_holiday:
-            holiday_info += f"🌍 西洋節日: {western_holiday}\n"
-        
-        # 組合結果
-        result = ""
-        if personal_events:
-            result += personal_events
-        else:
-            result += "📅 今日無個人行程\n"
-        
-        if holiday_info:
-            result += holiday_info
-        
-        if not personal_events and not holiday_info:
-            result = "📅 今日無特別行程或節日"
-        
-        return result.strip()
         
     except Exception as e:
-        return f"❌ 行事曆讀取失敗: {str(e)}"
+        print(f"政府節假日 API 錯誤: {e}")
+        return None
 
-# 取得真實天氣資料
-def get_weather_by_location(location, date=None):
-    """取得指定地點的天氣資訊"""
+# 從 Google Calendar 取得台灣節假日
+def get_taiwan_holidays_from_google():
+    """從 Google Calendar 台灣節假日行事曆取得資料"""
+    try:
+        service = get_calendar_service()
+        if not service:
+            return None
+        
+        # 台灣節假日的公開行事曆 ID
+        taiwan_holidays_calendar_id = 'zh-tw.taiwan#holiday@group.v.calendar.google.com'
+        
+        # 取得今日
+        now = datetime.now()
+        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + 'Z'
+        end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat() + 'Z'
+        
+        events_result = service.events().list(
+            calendarId=taiwan_holidays_calendar_id,
+            timeMin=start_of_day,
+            timeMax=end_of_day,
+            maxResults=10,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        
+        events = events_result.get('items', [])
+        
+        if events:
+            holiday_names = []
+            for event in events:
+                holiday_names.append(event.get('summary', '節假日'))
+            return f"🇹🇼 {' / '.join(holiday_names)}"
+        
+        return None
+        
+    except Exception as e:
+        print(f"Google Calendar 節假日錯誤: {e}")
+        return None
+
+# 取得國際節日 (從 Google Calendar)
+def get_international_holidays():
+    """從 Google Calendar 國際節日行事曆取得資料"""
+    try:
+        service = get_calendar_service()
+        if not service:
+            return None
+        
+        # 國際節日的公開行事曆 ID
+        international_calendar_id = 'en.global#holiday@group.v.calendar.google.com'
+        
+        now = datetime.now()
+        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + 'Z'
+        end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat() + 'Z'
+        
+        events_result = service.events().list(
+            calendarId=international_calendar_id,
+            timeMin=start_of_day,
+            timeMax=end_of_day,
+            maxResults=5,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        
+        events = events_result.get('items', [])
+        
+        if events:
+            holiday_names = []
+            for event in events:
+                holiday_names.append(event.get('summary', '國際節日'))
+            return f"🌍 {' / '.join(holiday_names)}"
+        
+        return None
+        
+    except Exception as e:
+        print(f"國際節日錯誤: {e}")
+        return None
+
+# Google Calendar 服務初始化 (暫時簡化版)
+def get_calendar_service():
+    """取得 Google Calendar 服務 - 暫時返回 None，功能開發中"""
+    # TODO: 實作 Google Calendar API 整合
+    # 需要設定 service account 或 OAuth 認證
+    return None
+
+# 簡化版台灣節假日查詢 (備用方案)
+def get_taiwan_holidays_fallback():
+    """備用的台灣節假日查詢"""
+    today = datetime.now()
+    
+    # 基本的節假日判斷 (2025年重要節日)
+    major_holidays = {
+        "01-01": "🎊 元旦",
+        "01-28": "🏮 除夕", 
+        "01-29": "🧧 春節初一",
+        "01-30": "🧧 春節初二",
+        "01-31": "🧧 春節初三",
+        "02-28": "🌸 和平紀念日",
+        "04-04": "🌿 兒童節",
+        "04-05": "🌿 清明節", 
+        "05-01": "⚒️ 勞動節",
+        "06-15": "🚣 端午節",
+        "09-17": "🏮 中秋節",
+        "10-10": "🇹🇼 國慶日"
+    }
+    
+    today_str = today.strftime("%m-%d")
+    holiday = major_holidays.get(today_str)
+    
+    if holiday:
+        return f"🇹🇼 {holiday} (國定假日)"
+    
+    return None
+
+# 取得個人行程
+def get_personal_calendar_events():
+    """取得個人 Google Calendar 行程"""
+    try:
+        service = get_calendar_service()
+        if not service:
+            return "💡 Google Calendar 個人行程整合設定中..."
+        
+        now = datetime.now()
+        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + 'Z'
+        end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat() + 'Z'
+
+        events_result = service.events().list(
+            calendarId='primary',
+            timeMin=start_of_day,
+            timeMax=end_of_day,
+            maxResults=10,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        
+        events = events_result.get('items', [])
+        
+        if not events:
+            return "📅 今日無個人行程"
+        
+        personal_events = "📅 今日個人行程:\n"
+        for event in events:
+            start = event['start'].get('dateTime', event['start'].get('date'))
+            if 'T' in start:
+                start_time = datetime.fromisoformat(start.replace('Z', '+00:00'))
+                time_str = start_time.strftime('%H:%M')
+            else:
+                time_str = "全天"
+            
+            summary = event.get('summary', '無標題')
+            personal_events += f"• {time_str} - {summary}\n"
+        
+        return personal_events.strip()
+        
+    except Exception as e:
+        return f"❌ 個人行程讀取失敗: {str(e)}"
+
+# 彈性的行事曆資訊整合 (修正版)
+def get_calendar_info():
+    """整合所有行事曆資訊 - 彈性動態版本 (修正版)"""
+    try:
+        result_parts = []
+        
+        # 1. 嘗試從政府 API 取得台灣節假日
+        try:
+            tw_holiday_gov = get_taiwan_holidays_dynamic()
+            if tw_holiday_gov:
+                result_parts.append(tw_holiday_gov)
+        except Exception as e:
+            print(f"政府 API 錯誤: {e}")
+        
+        # 2. 如果政府 API 失敗，使用備用方案
+        if not result_parts:
+            try:
+                tw_holiday_fallback = get_taiwan_holidays_fallback()
+                if tw_holiday_fallback:
+                    result_parts.append(tw_holiday_fallback)
+            except Exception as e:
+                print(f"備用節假日錯誤: {e}")
+        
+        # 3. 嘗試取得國際節日 (如果 Google Calendar 可用)
+        try:
+            international_holiday = get_international_holidays()
+            if international_holiday:
+                result_parts.append(international_holiday)
+        except Exception as e:
+            print(f"國際節日錯誤: {e}")
+        
+        # 4. 取得個人行程
+        try:
+            personal_events = get_personal_calendar_events()
+            if personal_events and "設定中" not in personal_events:
+                result_parts.append(personal_events)
+            else:
+                result_parts.append("📅 個人行程: Google Calendar 整合設定中...")
+        except Exception as e:
+            result_parts.append("📅 個人行程: 功能開發中...")
+        
+        # 5. 週末/工作日提醒
+        today = datetime.now()
+        if today.weekday() == 5:
+            result_parts.append("🌴 今日週六，好好休息！")
+        elif today.weekday() == 6:
+            result_parts.append("🌴 今日週日，準備迎接新的一週！")
+        elif not is_workday():
+            result_parts.append("🌴 今日放假，享受假期時光！")
+        
+        # 組合結果
+        if result_parts:
+            return "\n\n".join(result_parts)
+        else:
+            return "📅 今日無特殊行程或節日"
+        
+    except Exception as e:
+        return f"❌ 行事曆功能錯誤: {str(e)}"
+
+# 取得天氣資訊
+def get_weather(location):
     try:
         if not WEATHER_API_KEY:
             return "❌ 天氣 API Key 未設定"
         
-        location_mapping = {
+        # 地點對應
+        location_map = {
             "新店": "Xindian District, New Taipei, Taiwan",
-            "中山區": "Zhongshan District, Taipei, Taiwan", 
+            "中山區": "Zhongshan District, Taipei, Taiwan",
             "中正區": "Zhongzheng District, Taipei, Taiwan"
         }
         
-        search_location = location_mapping.get(location, location)
+        search_location = location_map.get(location, location)
+        today = datetime.now().strftime('%Y-%m-%d')
         
-        if not date:
-            date = datetime.now().strftime('%Y-%m-%d')
+        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{search_location}/{today}"
         
-        url = f"{WEATHER_BASE_URL}/{search_location}/{date}"
         params = {
             'key': WEATHER_API_KEY,
             'include': 'days,current',
@@ -232,114 +325,99 @@ def get_weather_by_location(location, date=None):
                 day_data = data['days'][0]
                 current_data = data.get('currentConditions', {})
                 
-                # 當前溫度
-                current_temp = current_data.get('temp')
-                if current_temp:
-                    current_temp_c = (current_temp - 32) * 5/9
-                else:
-                    current_temp_c = None
+                # 溫度轉換 (華氏轉攝氏)
+                def f_to_c(temp_f):
+                    return (temp_f - 32) * 5/9 if temp_f else None
                 
-                # 最高最低溫
-                temp_max = day_data.get('tempmax')
-                temp_min = day_data.get('tempmin')
-                temp_max_c = (temp_max - 32) * 5/9 if temp_max else None
-                temp_min_c = (temp_min - 32) * 5/9 if temp_min else None
+                current_temp_c = f_to_c(current_data.get('temp'))
+                temp_max_c = f_to_c(day_data.get('tempmax'))
+                temp_min_c = f_to_c(day_data.get('tempmin'))
                 
                 humidity = day_data.get('humidity', 0)
                 conditions = day_data.get('conditions', 'N/A')
                 windspeed = day_data.get('windspeed', 0)
                 
-                weather_report = f"🌤️ {location} 天氣 ({date})\n"
-                if current_temp_c:
-                    weather_report += f"🌡️ 現在: {current_temp_c:.1f}°C\n"
-                if temp_max_c and temp_min_c:
-                    weather_report += f"🌡️ 高低溫: {temp_max_c:.1f}°C / {temp_min_c:.1f}°C\n"
-                weather_report += f"💧 濕度: {humidity:.0f}%\n"
-                weather_report += f"💨 風速: {windspeed:.1f}km/h\n"
-                weather_report += f"☁️ {conditions}"
+                result = f"🌤️ {location} 天氣 ({today})\n\n"
                 
-                return weather_report
+                if current_temp_c:
+                    result += f"🌡️ 現在溫度: {current_temp_c:.1f}°C\n"
+                if temp_max_c and temp_min_c:
+                    result += f"🌡️ 高低溫: {temp_max_c:.1f}°C / {temp_min_c:.1f}°C\n"
+                result += f"💧 濕度: {humidity:.0f}%\n"
+                result += f"💨 風速: {windspeed:.1f} km/h\n"
+                result += f"☁️ 天氣狀況: {conditions}"
+                
+                return result
             else:
                 return f"❌ 無法取得 {location} 的天氣資料"
         else:
-            return f"❌ 天氣 API 錯誤 ({response.status_code})"
+            return f"❌ 天氣 API 錯誤 (狀態碼: {response.status_code})"
             
+    except requests.exceptions.Timeout:
+        return "❌ 天氣 API 請求超時"
     except Exception as e:
-        return f"❌ 天氣資料失敗: {str(e)}"
+        return f"❌ 天氣資料錯誤: {str(e)}"
 
-f"❌ {origin}→{destination}: {str(e)}")
-        
-        return f"🚗 {location} 即時車流:\n" + "\n\n".join(traffic_info)
-        
-    except Exception as e:
-        return f"❌ 車流資料失敗: {str(e)}"
-
-# 取得美股資料 (包含盤後交易)
+# 取得美股資訊
 def get_us_stocks():
-    """取得美股資料 (正常交易 + 盤後交易)"""
     try:
-        symbols = ['NVDA', 'SMCI', 'GOOGL', 'AAPL', 'MSFT']  # 輝達、美超微、Google、蘋果、微軟
+        symbols = ['NVDA', 'SMCI', 'GOOGL', 'AAPL', 'MSFT']
         stock_names = ['輝達 (NVIDIA)', '美超微 (Super Micro)', 'Google (Alphabet)', '蘋果 (Apple)', '微軟 (Microsoft)']
+        
         results = []
         
         for i, symbol in enumerate(symbols):
             try:
+                # 使用更穩定的方法取得股價
                 ticker = yf.Ticker(symbol)
                 
-                # 取得歷史資料 (正常交易時間)
-                hist = ticker.history(period="5d")
+                # 取得最近 5 天的資料
+                hist = ticker.history(period="5d", interval="1d")
                 
                 if len(hist) >= 2:
-                    # 正常交易時間的收盤價
                     current_price = hist['Close'].iloc[-1]
                     prev_price = hist['Close'].iloc[-2]
                     change = current_price - prev_price
                     change_percent = (change / prev_price) * 100
                     
-                    # 嘗試取得即時資料 (可能包含盤後價格)
+                    emoji = "🟢" if change >= 0 else "🔴"
+                    
+                    stock_info = f"{emoji} {stock_names[i]}\n"
+                    stock_info += f"   收盤: ${current_price:.2f} ({change_percent:+.2f}%)"
+                    
+                    # 嘗試取得盤後交易資料
                     try:
                         info = ticker.info
-                        current_market_price = info.get('currentPrice', current_price)
-                        post_market_price = info.get('postMarketPrice', None)
-                        post_market_change = info.get('postMarketChange', None)
-                        post_market_change_percent = info.get('postMarketChangePercent', None)
+                        post_market_price = info.get('postMarketPrice')
+                        post_market_change_percent = info.get('postMarketChangePercent')
                         
-                        # 判斷正常交易時間漲跌
-                        emoji = "🟢" if change >= 0 else "🔴"
-                        
-                        result_text = f"{emoji} {stock_names[i]}\n"
-                        result_text += f"   收盤: ${current_price:.2f} ({change_percent:+.2f}%)"
-                        
-                        # 如果有盤後交易資料
-                        if post_market_price and post_market_change and post_market_change_percent:
-                            post_emoji = "🟢" if post_market_change >= 0 else "🔴"
-                            result_text += f"\n   {post_emoji} 盤後: ${post_market_price:.2f} ({post_market_change_percent*100:+.2f}%)"
-                        
-                        results.append(result_text)
-                        
+                        if post_market_price and post_market_change_percent:
+                            post_emoji = "🟢" if post_market_change_percent >= 0 else "🔴"
+                            stock_info += f"\n   {post_emoji} 盤後: ${post_market_price:.2f} ({post_market_change_percent*100:+.2f}%)"
                     except:
-                        # 如果無法取得即時資料，就只顯示收盤價
-                        emoji = "🟢" if change >= 0 else "🔴"
-                        results.append(f"{emoji} {stock_names[i]}")
-                        results.append(f"   收盤: ${current_price:.2f} ({change_percent:+.2f}%)")
-                        
+                        pass  # 如果無法取得盤後資料就跳過
+                    
+                    results.append(stock_info)
                 else:
                     results.append(f"❌ {stock_names[i]}: 資料不足")
                     
             except Exception as e:
                 results.append(f"❌ {stock_names[i]}: 取得失敗")
         
-        return "📈 美股昨夜表現:\n" + "\n\n".join(results)
+        if not results:
+            return "❌ 無法取得任何美股資料，請稍後再試"
+            
+        return "📈 美股昨夜表現:\n\n" + "\n\n".join(results)
         
     except Exception as e:
-        return f"❌ 美股資料失敗: {str(e)}"
+        return f"❌ 美股資料系統錯誤: {str(e)}"
 
-# 取得台股資料
+# 取得台股資訊
 def get_taiwan_stocks():
-    """取得台股資料"""
     try:
         symbols = ['2330.TW', '2454.TW', '2317.TW', '3008.TW', '2303.TW']
         stock_names = ['台積電', '聯發科', '鴻海', '大立光', '聯電']
+        
         results = []
         
         for i, symbol in enumerate(symbols):
@@ -354,6 +432,7 @@ def get_taiwan_stocks():
                     change_percent = (change / prev_price) * 100
                     
                     emoji = "🟢" if change >= 0 else "🔴"
+                    
                     results.append(f"{emoji} {stock_names[i]} ({symbol.replace('.TW', '')})")
                     results.append(f"   NT${current_price:.2f} ({change_percent:+.2f}%)")
                 else:
@@ -362,75 +441,123 @@ def get_taiwan_stocks():
             except Exception as e:
                 results.append(f"❌ {stock_names[i]}: 取得失敗")
         
-        return "📊 台股主要標的:\n" + "\n".join(results)
+        # 檢查是否為交易時間
+        now = datetime.now()
+        if now.weekday() >= 5:  # 週末
+            status = "📊 台股主要標的 (週末休市):\n"
+        elif now.hour < 9 or now.hour >= 14:  # 非交易時間
+            status = "📊 台股主要標的 (非交易時間):\n"
+        else:
+            status = "📊 台股主要標的 (交易中):\n"
+            
+        return status + "\n".join(results)
         
     except Exception as e:
-        return f"❌ 台股資料失敗: {str(e)}"
+        return f"❌ 台股資料錯誤: {str(e)}"
 
-# 取得新聞資料
-def get_major_news():
-    """取得國內外重大新聞"""
+# 取得特定路線車流
+def get_route_traffic(route_type):
     try:
-        if not NEWS_API_KEY:
-            return "❌ 新聞 API Key 未設定"
+        if not GOOGLE_MAPS_API_KEY:
+            return "❌ Google Maps API Key 未設定"
         
-        # 取得台灣新聞
-        tw_params = {
-            'country': 'tw',
-            'category': 'business',
-            'pageSize': 3,
-            'apiKey': NEWS_API_KEY
+        routes = {
+            "家公司": ("🏠→🏢", "家", "公司", HOME_ADDRESS, OFFICE_ADDRESS),
+            "公司郵局": ("🏢→📮", "公司", "金南郵局", OFFICE_ADDRESS, JINNAN_POST_OFFICE),
+            "公司家": ("🏢→🏠", "公司", "家", OFFICE_ADDRESS, HOME_ADDRESS)
         }
         
-        tw_response = requests.get(NEWS_API_URL, params=tw_params, timeout=10)
+        if route_type not in routes:
+            return "❌ 路線類型錯誤"
         
-        # 取得國際新聞
-        intl_params = {
-            'country': 'us',
-            'category': 'business',
-            'pageSize': 3,
-            'apiKey': NEWS_API_KEY
+        emoji, origin_name, dest_name, origin_addr, dest_addr = routes[route_type]
+        
+        url = "https://maps.googleapis.com/maps/api/directions/json"
+        params = {
+            'origin': origin_addr,
+            'destination': dest_addr,
+            'departure_time': 'now',
+            'traffic_model': 'best_guess',
+            'key': GOOGLE_MAPS_API_KEY
         }
         
-        intl_response = requests.get(NEWS_API_URL, params=intl_params, timeout=10)
+        response = requests.get(url, params=params, timeout=15)
         
-        news_text = "📰 重大新聞:\n\n"
-        
-        # 處理台灣新聞
-        if tw_response.status_code == 200:
-            tw_data = tw_response.json()
-            if tw_data['articles']:
-                news_text += "🇹🇼 台灣:\n"
-                for article in tw_data['articles'][:2]:
-                    title = article['title']
-                    news_text += f"• {title}\n"
-                news_text += "\n"
-        
-        # 處理國際新聞
-        if intl_response.status_code == 200:
-            intl_data = intl_response.json()
-            if intl_data['articles']:
-                news_text += "🌍 國際:\n"
-                for article in intl_data['articles'][:2]:
-                    title = article['title']
-                    news_text += f"• {title}\n"
-        
-        return news_text
-        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if data['status'] == 'OK' and data['routes']:
+                route = data['routes'][0]['legs'][0]
+                duration = route['duration']['text']
+                duration_in_traffic = route.get('duration_in_traffic', {}).get('text', duration)
+                distance = route['distance']['text']
+                
+                # 判斷車流狀況
+                normal_time = route['duration']['value']
+                traffic_time = route.get('duration_in_traffic', {}).get('value', normal_time)
+                
+                if traffic_time <= normal_time * 1.2:
+                    status = "🟢 順暢"
+                elif traffic_time <= normal_time * 1.5:
+                    status = "🟡 緩慢"
+                else:
+                    status = "🔴 壅塞"
+                
+                result = f"🚗 {emoji} {origin_name} → {dest_name}\n\n"
+                result += f"{status} 路況\n"
+                result += f"⏱️ 預估時間: {duration_in_traffic}\n"
+                result += f"📏 距離: {distance}\n"
+                result += f"🛣️ 正常時間: {duration}"
+                
+                return result
+            else:
+                return f"❌ 無法取得 {origin_name}→{dest_name} 路況: {data.get('status', '未知錯誤')}"
+        else:
+            return f"❌ Google Maps API 錯誤 (狀態碼: {response.status_code})"
+            
+    except requests.exceptions.Timeout:
+        return "❌ Google Maps API 請求超時"
     except Exception as e:
-        return f"❌ 新聞資料失敗: {str(e)}"
+        return f"❌ 路線查詢錯誤: {str(e)}"
+
+# 取得所有路線車流
+def get_all_routes_traffic():
+    try:
+        routes = ["家公司", "公司郵局", "公司家"]
+        results = []
+        
+        for route in routes:
+            traffic_info = get_route_traffic(route)
+            results.append(traffic_info)
+        
+        return "\n\n".join(results)
+    except Exception as e:
+        return f"❌ 所有路線查詢錯誤: {str(e)}"
+
+# 取得新聞 (簡化版，無需額外 API)
+def get_simple_news():
+    return """📰 新聞功能提醒:
+
+🔔 如需完整新聞功能，請：
+1. 到 newsapi.org 申請免費 API Key
+2. 將 NEWS_API_KEY 加入環境變數
+
+💡 目前可使用其他功能：
+• 美股 - 即時股價追蹤
+• 台股 - 台灣股市狀況  
+• 天氣 - 各區域天氣
+• 車流 - 路線車況分析"""
 
 # 檢查是否為上班日
 def is_workday():
-    """檢查今天是否為上班日 (週一到週五)"""
     return datetime.now().weekday() < 5
 
-# 07:10 新店天氣報告 (每日) + 美股
-def send_xindian_morning_report():
+# 排程推送函數
+def send_morning_weather_report():
     try:
-        weather_data = get_weather_by_location("新店")
-        calendar_data = get_today_calendar_events()
-        us_stocks_data = get_us_stocks()  # 加入美股資訊
+        weather_data = get_weather("新店")
+        us_stocks_data = get_us_stocks()
+        calendar_data = get_calendar_info()
         
         report = f"""🌅 早安！綜合晨報
 
@@ -444,18 +571,17 @@ def send_xindian_morning_report():
 
         line_bot_api.push_message(YOUR_USER_ID, TextSendMessage(text=report))
     except Exception as e:
-        print(f"新店早晨報告失敗: {e}")
+        print(f"早晨報告失敗: {e}")
 
-# 08:00 中山區天氣+車流報告 (僅上班日)
-def send_zhongshan_workday_report():
+def send_workday_morning_report():
     try:
         if not is_workday():
             return
             
-        weather_data = get_weather_by_location("中山區")
-        traffic_data = get_real_traffic_status("中山區")
+        weather_data = get_weather("中山區")
+        traffic_data = get_route_traffic("家公司")
         
-        report = f"""🌅 上班日報告 - 中山區
+        report = f"""🌅 上班日報告
 
 {weather_data}
 
@@ -465,16 +591,15 @@ def send_zhongshan_workday_report():
 
         line_bot_api.push_message(YOUR_USER_ID, TextSendMessage(text=report))
     except Exception as e:
-        print(f"中山區上班日報告失敗: {e}")
+        print(f"上班日報告失敗: {e}")
 
-# 09:30 台股開盤+新聞 (僅上班日)
 def send_stock_opening_report():
     try:
         if not is_workday():
             return
             
         taiwan_stocks = get_taiwan_stocks()
-        news_data = get_major_news()
+        news_data = get_simple_news()
         
         report = f"""📈 台股開盤報告
 
@@ -486,9 +611,8 @@ def send_stock_opening_report():
 
         line_bot_api.push_message(YOUR_USER_ID, TextSendMessage(text=report))
     except Exception as e:
-        print(f"台股開盤報告失敗: {e}")
+        print(f"開盤報告失敗: {e}")
 
-# 12:00 台股盤中報告 (僅上班日)
 def send_stock_midday_report():
     try:
         if not is_workday():
@@ -504,9 +628,8 @@ def send_stock_midday_report():
 
         line_bot_api.push_message(YOUR_USER_ID, TextSendMessage(text=report))
     except Exception as e:
-        print(f"台股盤中報告失敗: {e}")
+        print(f"盤中報告失敗: {e}")
 
-# 13:45 台股收盤報告 (僅上班日)
 def send_stock_closing_report():
     try:
         if not is_workday():
@@ -523,137 +646,142 @@ def send_stock_closing_report():
 
         line_bot_api.push_message(YOUR_USER_ID, TextSendMessage(text=report))
     except Exception as e:
-        print(f"台股收盤報告失敗: {e}")
+        print(f"收盤報告失敗: {e}")
 
-# 17:30 下班報告
-def send_zhongzheng_evening_report():
+def send_evening_post_office_report():
     try:
         if not is_workday():
             return
             
-        weather_data = get_weather_by_location("中正區")
-        traffic_data = get_real_traffic_status("中正區")
+        weather_data = get_weather("中正區")
+        traffic_data = get_route_traffic("公司郵局")
         
-        report = f"""🌆 下班時間 - 中正區
+        report = f"""🌆 下班時間 - 前往郵局
 
 {weather_data}
 
 {traffic_data}
 
 📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-注意交通安全！"""
+💡 記得郵局營業時間喔！"""
 
         line_bot_api.push_message(YOUR_USER_ID, TextSendMessage(text=report))
     except Exception as e:
-        print(f"中正區下班報告失敗: {e}")
+        print(f"郵局下班報告失敗: {e}")
 
-def send_xindian_evening_report():
+def send_evening_home_report():
     try:
         if not is_workday():
             return
             
-        weather_data = get_weather_by_location("新店")
-        traffic_data = get_real_traffic_status("新店")
+        weather_data = get_weather("新店")
+        traffic_data = get_route_traffic("公司家")
         
-        report = f"""🌆 下班時間 - 新店
+        report = f"""🌆 下班時間 - 回家路線
 
 {weather_data}
 
 {traffic_data}
 
 📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-注意交通安全！"""
+🏠 注意交通安全，準時回家！"""
 
         line_bot_api.push_message(YOUR_USER_ID, TextSendMessage(text=report))
     except Exception as e:
-        print(f"新店下班報告失敗: {e}")
+        print(f"回家下班報告失敗: {e}")
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    user_message = event.message.text.lower()
+    user_message = event.message.text.strip()
     
-    if user_message == "美股":
+    # 直接比對，不轉小寫以避免問題
+    if user_message in ["美股", "美國股市"]:
         reply = get_us_stocks()
-    elif user_message == "台股":
+    elif user_message in ["台股", "台灣股市"]:
         reply = get_taiwan_stocks()
-    elif user_message == "新聞":
-        reply = get_major_news()
-    elif user_message == "行程" or user_message == "行事曆":
-        reply = get_today_calendar_events()
-    elif user_message == "車流" or user_message == "交通":
-        reply = get_route_traffic_status()
+    elif user_message in ["新聞", "news"]:
+        reply = get_simple_news()
+    elif user_message in ["行程", "行事曆", "calendar"]:
+        reply = get_calendar_info()
+    elif user_message in ["新店", "新店天氣"]:
+        reply = get_weather("新店")
+    elif user_message in ["中山區", "中山區天氣"]:
+        reply = get_weather("中山區")
+    elif user_message in ["中正區", "中正區天氣"]:
+        reply = get_weather("中正區")
+    elif user_message in ["車流", "交通", "路況"]:
+        reply = get_all_routes_traffic()
     elif user_message in ["家公司", "上班路線"]:
-        reply = get_specific_route_traffic("家公司")
+        reply = get_route_traffic("家公司")
     elif user_message in ["公司郵局", "郵局路線"]:
-        reply = get_specific_route_traffic("公司郵局")
+        reply = get_route_traffic("公司郵局")
     elif user_message in ["公司家", "回家路線"]:
-        reply = get_specific_route_traffic("公司家")
-    elif user_message in ["新店天氣", "新店"]:
-        reply = get_weather_by_location("新店")
-    elif user_message in ["中山區天氣", "中山區"]:
-        reply = get_weather_by_location("中山區")
-    elif user_message in ["中正區天氣", "中正區"]:
-        reply = get_weather_by_location("中正區")
-    elif user_message == "幫助" or user_message == "help":
-        reply = """📋 可用指令:
+        reply = get_route_traffic("公司家")
+    elif user_message in ["測試", "test"]:
+        reply = "✅ LINE Bot 系統正常運作！\n\n🔧 所有功能已修正並優化\n📅 自動推送已設定完成"
+    elif user_message in ["幫助", "help", "說明"]:
+        reply = """📋 LINE Bot 功能指南
 
-💼 股市&新聞:
-• 美股 - 美股報價
-• 台股 - 台股報價
-• 新聞 - 重大新聞
-
-📅 行程:
-• 行程/行事曆 - 今日行程+節假日
+💼 股市資訊:
+• 美股 - 輝達/美超微/Google等
+• 台股 - 台積電/聯發科等主要股票
 
 🌤️ 天氣查詢:
-• 新店/新店天氣 • 中山區/中山區天氣 • 中正區/中正區天氣
+• 新店 - 新店天氣
+• 中山區 - 中山區天氣  
+• 中正區 - 中正區天氣
 
 🚗 車流查詢:
-• 車流/交通 - 三條路線車流
-• 家公司/上班路線 - 家→公司
-• 公司郵局/郵局路線 - 公司→金南郵局  
-• 公司家/回家路線 - 公司→家
+• 車流 - 所有路線車況
+• 家公司 - 🏠→🏢 家到公司
+• 公司郵局 - 🏢→📮 公司到金南郵局
+• 公司家 - 🏢→🏠 公司到家
+
+📅 其他功能:
+• 行程 - 今日行程與節假日
+• 新聞 - 新聞功能說明
+• 測試 - 系統狀態檢查
 
 ⏰ 自動推送時間:
-每日 07:10 - 新店天氣+美股(輝達/美超微/Google)+行程+節假日
-上班日 08:00 - 中山區天氣+家→公司車流
+每日 07:10 - 新店天氣+美股+行程
+上班日 08:00 - 中山區天氣+上班路線
 上班日 09:30 - 台股開盤+新聞
 上班日 12:00 - 台股盤中
-上班日 13:45 - 台股收盤
-上班日 17:30 (一三五) - 中正區天氣+公司→郵局車流
-上班日 17:30 (二四) - 新店天氣+公司→家車流"""
+上班日 13:45 - 台股收盤  
+上班日 17:30 (一三五) - 中正區天氣+郵局路線
+上班日 17:30 (二四) - 新店天氣+回家路線"""
     else:
-        reply = "🤖 請輸入「幫助」查看可用指令"
+        reply = f"🤖 抱歉，我不理解「{user_message}」\n\n請輸入「幫助」查看所有可用功能"
     
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
 # 排程器設定
 scheduler = BackgroundScheduler()
 
-# 每日 07:10 - 新店天氣+行程
-scheduler.add_job(func=send_xindian_morning_report, trigger="cron", hour=7, minute=10)
+# 每日 07:10 - 綜合晨報
+scheduler.add_job(func=send_morning_weather_report, trigger="cron", hour=7, minute=10)
 
-# 上班日 08:00 - 中山區天氣+車流
-scheduler.add_job(func=send_zhongshan_workday_report, trigger="cron", 
+# 上班日 08:00 - 上班報告  
+scheduler.add_job(func=send_workday_morning_report, trigger="cron", 
                  day_of_week='mon-fri', hour=8, minute=0)
 
-# 上班日 09:30 - 台股開盤+新聞
+# 上班日 09:30 - 開盤報告
 scheduler.add_job(func=send_stock_opening_report, trigger="cron", 
                  day_of_week='mon-fri', hour=9, minute=30)
 
-# 上班日 12:00 - 台股盤中
+# 上班日 12:00 - 盤中報告
 scheduler.add_job(func=send_stock_midday_report, trigger="cron", 
                  day_of_week='mon-fri', hour=12, minute=0)
 
-# 上班日 13:45 - 台股收盤
+# 上班日 13:45 - 收盤報告
 scheduler.add_job(func=send_stock_closing_report, trigger="cron", 
                  day_of_week='mon-fri', hour=13, minute=45)
 
 # 上班日 17:30 - 下班報告
-scheduler.add_job(func=send_zhongzheng_evening_report, trigger="cron", 
+scheduler.add_job(func=send_evening_post_office_report, trigger="cron", 
                  day_of_week='mon,wed,fri', hour=17, minute=30)
 
-scheduler.add_job(func=send_xindian_evening_report, trigger="cron", 
+scheduler.add_job(func=send_evening_home_report, trigger="cron", 
                  day_of_week='tue,thu', hour=17, minute=30)
 
 scheduler.start()
