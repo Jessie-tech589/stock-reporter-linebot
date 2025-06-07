@@ -10,7 +10,8 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import json
 import datetime as dt
-from alpha_vantage.timeseries import TimeSeries
+# 富果行情 API（新版本）
+from fugle_marketdata import RestClient
 
 app = Flask(__name__)
 
@@ -49,14 +50,15 @@ stock_name_map = {
     "00918": "00918",
     "00878": "00878",
     "鴻準": "2354",
-    "大盤": "TAIEX"
+    "大盤": "TAIEX"  # 富果 API 大盤指數代碼為 "TAIEX"
 }
 
 # 美股中文名稱 ↔ 股票代碼對照表
 us_stock_name_map = {
     "輝達": "NVDA",
     "美超微": "SMCI",
-    "google": "GOOGL"
+    "google": "GOOGL",
+    "蘋果": "AAPL"
 }
 
 # ==================== 核心功能函數 ====================
@@ -84,41 +86,48 @@ def get_weather(location):
         return f"❌ {location}天氣\n\n取得資料失敗 ({str(e)})"
 
 def get_taiwan_stock_info(code):
-    url = "https://api.finmindtrade.com/api/v4/data"
-    params = {
-        "dataset": "TaiwanStockPrice",
-        "data_id": code,
-        "start_date": "2024-06-01",
-        "end_date": "2024-06-08"
-    }
+    api_key = os.environ.get('FUGLE_API_KEY', '')
+    if not api_key:
+        return "❌ 富果API金鑰未設定，請設定環境變數 FUGLE_API_KEY"
     try:
-        res = requests.get(url, params=params)
-        data = res.json()
-        if not data.get('data'):
-            return f"{code}: 無法取得資料"
-        latest = data['data'][0]
+        client = RestClient(api_key=api_key)
+        quote = client.stock.intraday.quote(symbol_id=code)
+        if not quote or 'data' not in quote or not quote['data']:
+            return f"{code}: 查無即時行情資料"
+        info = quote['data']
+        name = info.get('name', code)
+        price = info.get('last', 'N/A')
+        open_price = info.get('open', 'N/A')
+        high = info.get('high', 'N/A')
+        low = info.get('low', 'N/A')
+        volume = info.get('volume', 'N/A')
+        time = info.get('at', 'N/A')
         return (
-            f"📈 台股 {'大盤' if code=='TAIEX' else '個股'}\n"
-            f"名稱: {'加權指數' if code=='TAIEX' else code}\n"
-            f"日期: {latest['date']}\n"
-            f"收盤價: {latest['close']}\n"
-            f"漲跌: {latest.get('spread', 'N/A')}\n"
-            f"成交量: {latest.get('Trading_Volume', 'N/A')}"
+            f"📈 {name}（{code}）即時行情\n"
+            f"時間：{time}\n"
+            f"成交價：{price}\n"
+            f"開盤：{open_price}\n"
+            f"最高：{high}\n"
+            f"最低：{low}\n"
+            f"成交量：{volume}"
         )
     except Exception as e:
-        return f"{code}: 取得資料失敗 ({str(e)})"
+        return f"{code}: 取得行情失敗 ({str(e)})"
 
 def get_us_stock_info(symbol):
     api_key = os.environ.get('ALPHA_VANTAGE_API_KEY', '')
     if not api_key:
         return "Alpha Vantage API金鑰未設定"
     try:
-        ts = TimeSeries(key=api_key, output_format='pandas')
-        data, _ = ts.get_quote_endpoint(symbol=symbol)
-        if '05. price' not in data.columns:
-            return f"{symbol}: 無法取得資料"
-        price = data['05. price'][0]
-        return f"📈 美股\n\n{symbol}: ${price}"
+        url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={api_key}"
+        res = requests.get(url)
+        data = res.json()
+        if 'Global Quote' not in data or not data['Global Quote']:
+            return f"{symbol}: 無法取得即時行情"
+        latest = data['Global Quote']
+        price = latest.get('05. price', 'N/A')
+        change = latest.get('10. change percent', 'N/A')
+        return f"📈 美股\n\n{symbol}: ${price}\n漲跌幅: {change}"
     except Exception as e:
         return f"{symbol}: 取得資料失敗 ({str(e)})"
 
