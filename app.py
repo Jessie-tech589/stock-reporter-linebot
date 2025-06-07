@@ -14,7 +14,7 @@ import json
 import datetime as dt
 
 from alpha_vantage.timeseries import TimeSeries
-import time  # 新增這行
+import time
 
 app = Flask(__name__)
 
@@ -27,26 +27,23 @@ TAIWAN_TZ = pytz.timezone('Asia/Taipei')
 
 # 定時推送設定
 SCHEDULED_MESSAGES = [
-    {"time": "07:10", "message": "morning_briefing", "days": "daily"},      # 新店天氣+美股+行程+節假日
-    {"time": "08:00", "message": "commute_to_work", "days": "weekdays"},    # 中山區天氣+家→公司車流
-    {"time": "09:30", "message": "market_open", "days": "weekdays"},        # 台股開盤+國內外新聞
-    {"time": "12:00", "message": "market_mid", "days": "weekdays"},         # 台股盤中
-    {"time": "13:45", "message": "market_close", "days": "weekdays"},       # 台股收盤
-    {"time": "17:30", "message": "evening_zhongzheng", "days": "135"},      # 中正區天氣+公司→郵局車流(一三五)
-    {"time": "17:30", "message": "evening_xindian", "days": "24"}           # 新店天氣+公司→家車流(二四)
+    {"time": "07:10", "message": "morning_briefing", "days": "daily"},
+    {"time": "08:00", "message": "commute_to_work", "days": "weekdays"},
+    {"time": "09:30", "message": "market_open", "days": "weekdays"},
+    {"time": "12:00", "message": "market_mid", "days": "weekdays"},
+    {"time": "13:45", "message": "market_close", "days": "weekdays"},
+    {"time": "17:30", "message": "evening_zhongzheng", "days": "135"},
+    {"time": "17:30", "message": "evening_xindian", "days": "24"}
 ]
 
 # 固定地址
 ADDRESSES = {
     "home": "新店區建國路99巷",
-    "office": "台北市南京東路三段131號", 
+    "office": "台北市南京東路三段131號",
     "post_office": "台北市愛國東路216號"
 }
 
-# ==================== 核心功能函數 ====================
-
 def get_weather(location):
-    """取得指定地區天氣（中央氣象局API）"""
     api_key = os.environ.get('WEATHER_API_KEY', '')
     if not api_key:
         return f"❌ {location}天氣\n\n天氣API金鑰未設定\n\n請設定環境變數 WEATHER_API_KEY"
@@ -60,81 +57,62 @@ def get_weather(location):
         wx = weather[0].get('weatherElement', [])
         if not wx:
             return f"❌ {location}天氣\n\n資料格式錯誤"
-        pop = wx[0]['time'][0]['parameter']['parameterName']  # 降雨機率
-        temp = wx[4]['time'][0]['parameter']['parameterName'] # 溫度
-        desc = wx[3]['time'][0]['parameter']['parameterName'] # 天氣描述
+        pop = wx[0]['time'][0]['parameter']['parameterName']
+        temp = wx[4]['time'][0]['parameter']['parameterName']
+        desc = wx[3]['time'][0]['parameter']['parameterName']
         return f"☀️ {location}天氣\n\n🌡️ 溫度: {temp}°C\n💧 降雨機率: {pop}%\n☁️ 天氣: {desc}\n\n資料來源: 中央氣象局"
     except Exception as e:
         print(f"天氣API錯誤: {str(e)}")
         return f"❌ {location}天氣\n\n取得資料失敗 ({str(e)})"
 
-def get_us_stocks():
-    """取得美股資訊（Alpha Vantage API）"""
-    API_KEY = os.environ.get('ALPHA_VANTAGE_API_KEY')
-    if not API_KEY:
-        return "Alpha Vantage API金鑰未設定"
-    stocks = ["NVDA", "SMCI", "GOOGL", "AAPL", "MSFT"]
-    result = "📈 美股資訊\n"
-    ts = TimeSeries(key=API_KEY, output_format='pandas')
-    for symbol in stocks:
-        try:
-            data, _ = ts.get_quote_endpoint(symbol=symbol)
-            # 檢查是否有價格欄位（若被API限制會回傳空或錯誤）
-            if '05. price' not in data.columns:
-                result += f"{symbol}: 取得資料失敗 (API限制或無資料)\n"
-            else:
-                price = data['05. price'][0]
-                result += f"{symbol}: ${price}\n"
-        except Exception as e:
-            result += f"{symbol}: 取得資料失敗 ({str(e)})\n"
-        time.sleep(12)  # Alpha Vantage免費版每分鐘最多5次，每次查詢間隔12秒
-    return result
+def get_us_market():
+    try:
+        sp500 = yf.Ticker("^GSPC")
+        hist = sp500.history(period="1d")
+        if hist.empty:
+            return "📈 美股大盤資訊\n\n無法取得資料"
+        close_price = hist['Close'].iloc[-1]
+        return f"📈 美股大盤\n\n標普500指數: {close_price:.2f}"
+    except Exception as e:
+        return f"📈 美股大盤\n\n取得資料失敗 ({str(e)})"
+
+def get_us_stock(symbol):
+    try:
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period="1d")
+        if hist.empty:
+            return f"📈 美股個股\n\n{symbol}: 無法取得資料"
+        close_price = hist['Close'].iloc[-1]
+        return f"📈 美股個股\n\n{symbol}: ${close_price:.2f}"
+    except Exception as e:
+        return f"📈 美股個股\n\n{symbol}: 取得資料失敗 ({str(e)})"
 
 def get_taiwan_market():
-    """取得台股大盤與重要個股資訊（yfinance）"""
-    result = ""
-    # 取得大盤指數
     try:
         twii = yf.Ticker("^TWII")
         hist = twii.history(period="1d")
         if hist.empty:
-            twii_price = "無法取得"
-        else:
-            twii_price = int(hist['Close'].iloc[-1])
+            return "📈 台股大盤\n\n無法取得資料"
+        close_price = hist['Close'].iloc[-1]
+        return f"📈 台股大盤\n\n加權指數: {int(close_price)}"
     except Exception as e:
-        twii_price = f"錯誤: {str(e)}"
-    result = f"📈 台股大盤\n加權指數: {twii_price}\n\n"
+        return f"📈 台股大盤\n\n取得資料失敗 ({str(e)})"
 
-    # 取得重要個股
-    stocks = [
-        ("台積電", "2330.TW"),
-        ("鴻海", "2317.TW"),
-        ("聯發科", "2454.TW")
-    ]
-    for name, code in stocks:
-        try:
-            ticker = yf.Ticker(code)
-            hist = ticker.history(period="1d")
-            if hist.empty:
-                result += f"{name}: 無資料\n"
-            else:
-                close_price = hist['Close'].iloc[-1]
-                result += f"{name}: {close_price:.2f}\n"
-        except Exception as e:
-            result += f"{name}: 取得資料失敗 ({str(e)})\n"
-        time.sleep(3)  # 台股查詢間隔3秒，避免被網站封鎖
-    return result
-
-def get_taiwan_stocks():
-    """台股資訊（相容舊函數）"""
-    return get_taiwan_market()
+def get_taiwan_stock(code):
+    try:
+        ticker = yf.Ticker(f"{code}.TW")
+        hist = ticker.history(period="1d")
+        if hist.empty:
+            return f"📈 台股個股\n\n{code}: 無法取得資料"
+        close_price = hist['Close'].iloc[-1]
+        return f"📈 台股個股\n\n{code}: {close_price:.2f}"
+    except Exception as e:
+        return f"📈 台股個股\n\n{code}: 取得資料失敗 ({str(e)})"
 
 def get_news():
-    """取得新聞資訊（範例，可自行串接新聞API）"""
     return "📰 國內外新聞\n\n1. 台股創新高\n2. 美國科技股表現強勁\n\n(新聞API串接開發中...)"
 
 def get_traffic(from_place="home", to_place="office"):
-    """取得車流資訊（Google Maps API，需金鑰）"""
     api_key = os.environ.get('GOOGLE_MAPS_API_KEY', '')
     if not api_key:
         return "🚗 車流資訊\n\n(Google Maps API金鑰未設定)"
@@ -163,7 +141,7 @@ def get_google_calendar_events():
         creds_dict = json.loads(creds_json)
         creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         service = build('calendar', 'v3', credentials=creds)
-        now = dt.datetime.utcnow().isoformat() + 'Z'  # 'Z' 代表 UTC 時間
+        now = dt.datetime.utcnow().isoformat() + 'Z'
         events_result = service.events().list(
             calendarId='primary',
             timeMin=now,
@@ -187,45 +165,37 @@ def get_calendar():
     return get_google_calendar_events()
 
 def get_morning_briefing():
-    """早安綜合資訊"""
     weather = get_weather("新店")
-    us_stocks = get_us_stocks()
+    us_stocks = get_us_market()
     calendar = get_calendar()
     return f"🌞 早安！\n\n{weather}\n\n{us_stocks}\n\n{calendar}"
 
 def get_commute_to_work():
-    """上班通勤資訊"""
     weather = get_weather("中山區")
     traffic = get_traffic("home", "office")
     return f"🚗 上班通勤資訊\n\n{weather}\n\n{traffic}"
 
 def get_market_open():
-    """台股開盤資訊"""
-    stocks = get_taiwan_stocks()
+    stocks = get_taiwan_market()
     news = get_news()
     return f"📈 台股開盤\n\n{stocks}\n\n{news}"
 
 def get_evening_zhongzheng():
-    """下班資訊（中正區）"""
     weather = get_weather("中正區")
     traffic = get_traffic("office", "post_office")
     return f"🌆 下班資訊（中正區）\n\n{weather}\n\n{traffic}"
 
 def get_evening_xindian():
-    """下班資訊（新店）"""
     weather = get_weather("新店")
     traffic = get_traffic("office", "home")
     return f"🌆 下班資訊（新店）\n\n{weather}\n\n{traffic}"
 
-# ==================== 定時推送系統 ====================
-
 @app.route("/send_scheduled", methods=['POST'])
 def send_scheduled():
-    """處理定時推送請求"""
     try:
         taiwan_time = datetime.now(TAIWAN_TZ)
         current_time = taiwan_time.strftime('%H:%M')
-        current_weekday = taiwan_time.weekday()  # 0=Monday, 6=Sunday
+        current_weekday = taiwan_time.weekday()
         
         for schedule in SCHEDULED_MESSAGES:
             if schedule['time'] == current_time:
@@ -234,9 +204,9 @@ def send_scheduled():
                     should_send = True
                 elif schedule['days'] == 'weekdays' and current_weekday < 5:
                     should_send = True
-                elif schedule['days'] == '135' and current_weekday in [0, 2, 4]:  # 一三五
+                elif schedule['days'] == '135' and current_weekday in [0, 2, 4]:
                     should_send = True
-                elif schedule['days'] == '24' and current_weekday in [1, 3]:      # 二四
+                elif schedule['days'] == '24' and current_weekday in [1, 3]:
                     should_send = True
                 
                 if should_send:
@@ -248,9 +218,9 @@ def send_scheduled():
                     elif message_type == "market_open":
                         message = get_market_open()
                     elif message_type == "market_mid":
-                        message = get_taiwan_stocks()
+                        message = get_taiwan_market()
                     elif message_type == "market_close":
-                        message = get_taiwan_stocks()
+                        message = get_taiwan_market()
                     elif message_type == "evening_zhongzheng":
                         message = get_evening_zhongzheng()
                     elif message_type == "evening_xindian":
@@ -267,8 +237,6 @@ def send_scheduled():
     except Exception as e:
         print(f"定時推送錯誤: {str(e)}")
         return f"❌ 錯誤: {str(e)}"
-
-# ==================== LINE Bot 處理 ====================
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -292,17 +260,23 @@ def handle_message(event):
         elif user_message == "market_open":
             reply = get_market_open()
         elif user_message == "market_mid":
-            reply = get_taiwan_stocks()
+            reply = get_taiwan_market()
         elif user_message == "market_close":
-            reply = get_taiwan_stocks()
+            reply = get_taiwan_market()
         elif user_message == "evening_zhongzheng":
             reply = get_evening_zhongzheng()
         elif user_message == "evening_xindian":
             reply = get_evening_xindian()
-        elif user_message == "美股":
-            reply = get_us_stocks()
-        elif user_message == "台股":
-            reply = get_taiwan_stocks()
+        elif user_message == "美股" or user_message == "美股大盤":
+            reply = get_us_market()
+        elif user_message.startswith("美股 "):
+            symbol = user_message.split(" ")[1].strip().upper()
+            reply = get_us_stock(symbol)
+        elif user_message == "台股" or user_message == "台股大盤":
+            reply = get_taiwan_market()
+        elif user_message.startswith("台股 "):
+            code = user_message.split(" ")[1].strip()
+            reply = get_taiwan_stock(code)
         elif user_message == "新聞":
             reply = get_news()
         elif user_message == "車流":
