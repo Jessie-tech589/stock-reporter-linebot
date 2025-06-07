@@ -692,35 +692,43 @@ def send_evening_home_report():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    user_message = event.message.text.strip()
-    
-    # 直接比對，不轉小寫以避免問題
-    if user_message in ["美股", "美國股市"]:
-        reply = get_us_stocks()
-    elif user_message in ["台股", "台灣股市"]:
-        reply = get_taiwan_stocks()
-    elif user_message in ["新聞", "news"]:
-        reply = get_simple_news()
-    elif user_message in ["行程", "行事曆", "calendar"]:
-        reply = get_calendar_info()
-    elif user_message in ["新店", "新店天氣"]:
-        reply = get_weather("新店")
-    elif user_message in ["中山區", "中山區天氣"]:
-        reply = get_weather("中山區")
-    elif user_message in ["中正區", "中正區天氣"]:
-        reply = get_weather("中正區")
-    elif user_message in ["車流", "交通", "路況"]:
-        reply = get_all_routes_traffic()
-    elif user_message in ["家公司", "上班路線"]:
-        reply = get_route_traffic("家公司")
-    elif user_message in ["公司郵局", "郵局路線"]:
-        reply = get_route_traffic("公司郵局")
-    elif user_message in ["公司家", "回家路線"]:
-        reply = get_route_traffic("公司家")
-    elif user_message in ["測試", "test"]:
-        reply = "✅ LINE Bot 系統正常運作！\n\n🔧 所有功能已修正並優化\n📅 自動推送已設定完成"
-    elif user_message in ["幫助", "help", "說明"]:
-        reply = """📋 LINE Bot 功能指南
+    try:
+        user_message = event.message.text.strip()
+        
+        # 先記錄收到的訊息 (除錯用)
+        print(f"收到訊息: '{user_message}'")
+        
+        # 簡化比對邏輯，避免編碼問題
+        if user_message == "美股":
+            reply = get_us_stocks()
+        elif user_message == "台股":
+            reply = get_taiwan_stocks()
+        elif user_message == "新聞":
+            reply = get_simple_news()
+        elif user_message == "行程":
+            reply = get_calendar_info()
+        elif user_message == "行事曆":
+            reply = get_calendar_info()
+        elif user_message == "新店":
+            reply = get_weather("新店")
+        elif user_message == "中山區":
+            reply = get_weather("中山區")
+        elif user_message == "中正區":
+            reply = get_weather("中正區")
+        elif user_message == "車流":
+            reply = get_all_routes_traffic()
+        elif user_message == "交通":
+            reply = get_all_routes_traffic()
+        elif user_message == "家公司":
+            reply = get_route_traffic("家公司")
+        elif user_message == "公司郵局":
+            reply = get_route_traffic("公司郵局")
+        elif user_message == "公司家":
+            reply = get_route_traffic("公司家")
+        elif user_message == "測試":
+            reply = "✅ 股市播報員系統正常運作！\n\n🔧 所有功能已修正並優化\n📅 自動推送已設定完成\n\n請輸入「幫助」查看所有功能"
+        elif user_message == "幫助":
+            reply = """📋 股市播報員功能指南
 
 💼 股市資訊:
 • 美股 - 輝達/美超微/Google等
@@ -750,10 +758,15 @@ def handle_message(event):
 上班日 13:45 - 台股收盤  
 上班日 17:30 (一三五) - 中正區天氣+郵局路線
 上班日 17:30 (二四) - 新店天氣+回家路線"""
-    else:
-        reply = f"🤖 抱歉，我不理解「{user_message}」\n\n請輸入「幫助」查看所有可用功能"
-    
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+        else:
+            reply = f"🤖 抱歉，我不理解「{user_message}」\n\n請輸入「幫助」查看所有可用功能\n\n📋 快速指令: 美股、台股、新店、車流、測試"
+        
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+        
+    except Exception as e:
+        # 如果出現任何錯誤，至少要能回應
+        error_reply = f"❌ 系統錯誤: {str(e)}\n\n請稍後再試，或輸入「測試」檢查系統狀態"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=error_reply))
 
 # 排程器設定
 scheduler = BackgroundScheduler()
