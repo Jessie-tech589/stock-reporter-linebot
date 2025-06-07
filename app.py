@@ -8,6 +8,10 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+import datetime as dt
+
 app = Flask(__name__)
 
 # LINE Bot 設定
@@ -52,9 +56,10 @@ def get_weather(location):
         wx = weather[0].get('weatherElement', [])
         if not wx:
             return f"❌ {location}天氣\n\n資料格式錯誤"
-        pop = wx[0]['time'][0]['parameter']['parameterName']  # 降雨機率
-        temp = wx[4]['time'][0]['parameter']['parameterName'] # 溫度
-        desc = wx[3]['time'][0]['parameter']['parameterName'] # 天氣描述
+        # 降雨機率、溫度、天氣描述
+        pop = wx[0]['time'][0]['parameter']['parameterName']
+        temp = wx[4]['time'][0]['parameter']['parameterName']
+        desc = wx[3]['time'][0]['parameter']['parameterName']
         return f"☀️ {location}天氣\n\n🌡️ 溫度: {temp}°C\n💧 降雨機率: {pop}%\n☁️ 天氣: {desc}\n\n資料來源: 中央氣象局"
     except Exception as e:
         print(f"天氣API錯誤: {str(e)}")
@@ -139,9 +144,34 @@ def get_traffic(from_place="home", to_place="office"):
         print(f"車流API錯誤: {str(e)}")
         return f"🚗 車流資訊\n\n取得資料失敗 ({str(e)})"
 
+def get_google_calendar_events():
+    SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+    try:
+        creds = service_account.Credentials.from_service_account_file(
+            'credentials.json', scopes=SCOPES)
+        service = build('calendar', 'v3', credentials=creds)
+        now = dt.datetime.utcnow().isoformat() + 'Z'  # 'Z' 代表 UTC 時間
+        events_result = service.events().list(
+            calendarId='primary',
+            timeMin=now,
+            maxResults=10,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        events = events_result.get('items', [])
+        if not events:
+            return '今日無行程'
+        result = '📅 今日行程\n\n'
+        for event in events:
+            start = event['start'].get('dateTime', event['start'].get('date'))
+            result += f"• {start} {event['summary']}\n"
+        return result
+    except Exception as e:
+        print(f"Google Calendar API錯誤: {str(e)}")
+        return f"行事曆資料取得失敗 ({str(e)})"
+
 def get_calendar():
-    """取得行事曆與節日（範例，需Google Calendar API）"""
-    return "📅 今日行程\n\n• 09:00 會議\n• 14:00 客戶拜訪\n\n🎉 今日節日: 無\n\n(Google Calendar API串接開發中...)"
+    return get_google_calendar_events()
 
 def get_morning_briefing():
     """早安綜合資訊"""
