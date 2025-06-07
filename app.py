@@ -2,7 +2,6 @@ import os
 import requests
 from datetime import datetime
 import pytz
-import json
 import yfinance as yf
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
@@ -41,23 +40,25 @@ ADDRESSES = {
 def get_weather(location):
     """取得指定地區天氣（中央氣象局API）"""
     api_key = os.environ.get('WEATHER_API_KEY', '')
+    if not api_key:
+        return f"❌ {location}天氣\n\n天氣API金鑰未設定\n\n請設定環境變數 WEATHER_API_KEY"
     url = f"https://opendata.cwb.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization={api_key}&locationName={location}"
     try:
         res = requests.get(url)
         data = res.json()
         weather = data.get('records', {}).get('location', [])
         if not weather:
-            return f"❌ {location}天氣資料取得失敗"
+            return f"❌ {location}天氣\n\n無法取得資料"
         wx = weather[0].get('weatherElement', [])
         if not wx:
-            return f"❌ {location}天氣資料格式錯誤"
+            return f"❌ {location}天氣\n\n資料格式錯誤"
         pop = wx[0]['time'][0]['parameter']['parameterName']  # 降雨機率
         temp = wx[4]['time'][0]['parameter']['parameterName'] # 溫度
         desc = wx[3]['time'][0]['parameter']['parameterName'] # 天氣描述
         return f"☀️ {location}天氣\n\n🌡️ 溫度: {temp}°C\n💧 降雨機率: {pop}%\n☁️ 天氣: {desc}\n\n資料來源: 中央氣象局"
     except Exception as e:
         print(f"天氣API錯誤: {str(e)}")
-        return f"❌ {location}天氣資料取得失敗 ({str(e)})"
+        return f"❌ {location}天氣\n\n取得資料失敗 ({str(e)})"
 
 def get_us_stocks():
     """取得美股資訊（yfinance）"""
@@ -71,29 +72,47 @@ def get_us_stocks():
                 result += f"{stock}: 無資料\n"
                 continue
             close_price = hist['Close'].iloc[-1]
-            # yfinance無法直接取得盤後價，這裡用收盤價模擬
-            after_hours_price = close_price
-            result += f"{stock}: 收盤價 ${close_price:.2f} (盤後 ${after_hours_price:.2f})\n"
+            result += f"{stock}: 收盤價 ${close_price:.2f}\n"
         except Exception as e:
             result += f"{stock}: 取得資料失敗 ({str(e)})\n"
     return result
 
-def get_taiwan_stocks():
-    """取得台股資訊（Yahoo股市API）"""
+def get_taiwan_market():
+    """取得台股大盤與重要個股資訊（yfinance）"""
+    # 取得大盤指數
     try:
-        url = "https://tw.stock.yahoo.com/_td-stock/api/resource/StockServices.stockList;fields=symbol,name,price,change,percent?symbol=^TWII"
-        res = requests.get(url)
-        data = res.json()
-        if not data.get('data'):
-            return "📈 台股資訊\n\n無法取得資料"
-        twii = data['data'][0]
-        price = twii['price']
-        change = twii['change']
-        percent = twii['percent']
-        return f"📈 台股資訊\n\n加權指數: {price}\n漲跌幅: {change} ({percent})\n資料來源: Yahoo股市"
+        twii = yf.Ticker("^TWII")
+        hist = twii.history(period="1d")
+        if hist.empty:
+            twii_price = "無法取得"
+        else:
+            twii_price = int(hist['Close'].iloc[-1])
     except Exception as e:
-        print(f"台股API錯誤: {str(e)}")
-        return f"📈 台股資訊\n\n取得資料失敗 ({str(e)})"
+        twii_price = f"錯誤: {str(e)}"
+
+    # 取得重要個股
+    stocks = [
+        ("台積電", "2330.TW"),
+        ("鴻海", "2317.TW"),
+        ("聯發科", "2454.TW")
+    ]
+    result = f"📈 台股大盤\n加權指數: {twii_price}\n\n"
+    for name, code in stocks:
+        try:
+            ticker = yf.Ticker(code)
+            hist = ticker.history(period="1d")
+            if hist.empty:
+                result += f"{name}: 無資料\n"
+                continue
+            close_price = hist['Close'].iloc[-1]
+            result += f"{name}: {close_price:.2f}\n"
+        except Exception as e:
+            result += f"{name}: 取得資料失敗 ({str(e)})\n"
+    return result
+
+def get_taiwan_stocks():
+    """台股資訊（相容舊函數）"""
+    return get_taiwan_market()
 
 def get_news():
     """取得新聞資訊（範例，可自行串接新聞API）"""
