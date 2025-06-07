@@ -49,7 +49,7 @@ stock_name_map = {
     "00918": "00918",
     "00878": "00878",
     "鴻準": "2354",
-    "大盤": "TAIEX"  # FinMind 台股大盤指數代碼
+    "大盤": "TAIEX"
 }
 
 # 美股中文名稱 ↔ 股票代碼對照表
@@ -84,7 +84,6 @@ def get_weather(location):
         return f"❌ {location}天氣\n\n取得資料失敗 ({str(e)})"
 
 def get_taiwan_stock_info(code):
-    # 不需 token，直接呼叫 FinMind API
     url = "https://api.finmindtrade.com/api/v4/data"
     params = {
         "dataset": "TaiwanStockPrice",
@@ -245,7 +244,10 @@ def send_scheduled():
                         message = get_evening_xindian()
                     else:
                         continue
-                    
+
+                    # 訊息內容檢查，避免空訊息
+                    if not message or message.strip() == "":
+                        message = "⚠️ 查無資料，請確認關鍵字或稍後再試。"
                     try:
                         line_bot_api.push_message(os.environ.get('LINE_USER_ID'), TextSendMessage(text=message))
                     except Exception as e:
@@ -307,9 +309,14 @@ def handle_message(event):
             reply = "🤖 系統測試 v42\n\n✅ 連線正常\n✅ 推送系統運作中\n✅ 重寫版本\n\n📋 功能列表:\n• 美股、台股 (真實API)\n• 天氣 (新店/中山區/中正區)\n• 車流 (機車路線)\n• 新聞\n\n⏰ 定時推送:\n• 07:10 早安綜合\n• 08:00 上班通勤\n• 09:30 開盤+新聞\n• 12:00 台股盤中\n• 13:45 台股收盤\n• 17:30 下班資訊"
         elif user_message == "幫助":
             reply = "📚 LINE Bot 功能列表:"
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
     except Exception as e:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ 錯誤: " + str(e)))
+        reply = "❌ 錯誤: " + str(e)
+
+    # 訊息內容檢查，避免空訊息
+    if not reply or reply.strip() == "":
+        reply = "⚠️ 查無資料，請確認關鍵字或稍後再試。"
+
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
