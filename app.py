@@ -65,7 +65,7 @@ def get_weather(location):
     api_key = os.environ.get('WEATHER_API_KEY', '')
     if not api_key:
         return f"❌ {location}天氣\n\n天氣API金鑰未設定\n\n請設定環境變數 WEATHER_API_KEY"
-    url = f"https://opendata.cwb.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization={api_key}&locationName={location}"
+    url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization={api_key}&locationName={location}"
     try:
         res = requests.get(url)
         data = res.json()
@@ -78,7 +78,7 @@ def get_weather(location):
         pop = wx[0]['time'][0]['parameter']['parameterName']
         temp = wx[4]['time'][0]['parameter']['parameterName']
         desc = wx[3]['time'][0]['parameter']['parameterName']
-        return f"☀️ {location}天氣\n\n🌡️ 溫度: {temp}°C\n💧 降雨機率: {pop}%\n☁️ 天氣: {desc}\n\n資料來源: 中央氣象局"
+        return f"☀️ {location}天氣\n\n🌡️ 溫度: {temp}°C\n💧 降雨機率: {pop}%\n☁️ 天氣: {desc}\n\n資料來源: 中央氣象署"
     except Exception as e:
         print(f"天氣API錯誤: {str(e)}")
         return f"❌ {location}天氣\n\n取得資料失敗 ({str(e)})"
@@ -88,6 +88,8 @@ def get_taiwan_stock_info(code):
     params = {
         "dataset": "TaiwanStockPrice",
         "data_id": code,
+        "start_date": "2024-06-01",
+        "end_date": "2024-06-08"
     }
     try:
         res = requests.get(url, params=params)
