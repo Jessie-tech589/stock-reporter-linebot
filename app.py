@@ -13,6 +13,8 @@ from googleapiclient.discovery import build
 import json
 import datetime as dt
 
+from alpha_vantage.timeseries import TimeSeries  # <-- 新增這行
+
 app = Flask(__name__)
 
 # LINE Bot 設定
@@ -66,20 +68,20 @@ def get_weather(location):
         return f"❌ {location}天氣\n\n取得資料失敗 ({str(e)})"
 
 def get_us_stocks():
-    """取得美股資訊（yfinance）"""
+    """取得美股資訊（Alpha Vantage API）"""
+    API_KEY = os.environ.get('ALPHA_VANTAGE_API_KEY')
+    if not API_KEY:
+        return "Alpha Vantage API金鑰未設定"
     stocks = ["NVDA", "SMCI", "GOOGL", "AAPL", "MSFT"]
-    result = "📈 美股資訊\n"
-    for stock in stocks:
+    result = "📈 美股資訊（Alpha Vantage）\n"
+    ts = TimeSeries(key=API_KEY, output_format='pandas')
+    for symbol in stocks:
         try:
-            ticker = yf.Ticker(stock)
-            hist = ticker.history(period="1d")
-            if hist.empty:
-                result += f"{stock}: 無資料\n"
-                continue
-            close_price = hist['Close'].iloc[-1]
-            result += f"{stock}: 收盤價 ${close_price:.2f}\n"
+            data, _ = ts.get_quote_endpoint(symbol=symbol)
+            price = data['05. price'][0]
+            result += f"{symbol}: ${price}\n"
         except Exception as e:
-            result += f"{stock}: 取得資料失敗 ({str(e)})\n"
+            result += f"{symbol}: 取得資料失敗 ({str(e)})\n"
     return result
 
 def get_taiwan_market():
