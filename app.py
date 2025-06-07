@@ -84,14 +84,16 @@ def get_weather(location):
         return f"❌ {location}天氣\n\n取得資料失敗 ({str(e)})"
 
 def get_taiwan_stock_info(code):
-    token = os.environ.get('FINMIND_TOKEN', '')
-    if not token:
-        return "FinMind API Token 未設定"
-    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id={code}&token={token}"
+    # 不需 token，直接呼叫 FinMind API
+    url = "https://api.finmindtrade.com/api/v4/data"
+    params = {
+        "dataset": "TaiwanStockPrice",
+        "data_id": code,
+    }
     try:
-        res = requests.get(url)
+        res = requests.get(url, params=params)
         data = res.json()
-        if data.get('status', 0) != 200 or not data.get('data'):
+        if not data.get('data'):
             return f"{code}: 無法取得資料"
         latest = data['data'][0]
         return (
@@ -190,6 +192,12 @@ def get_market_open():
     news = get_news()
     return f"📈 台股開盤\n\n{stocks}\n\n{news}"
 
+def get_market_mid():
+    return get_taiwan_stock_info("TAIEX")
+
+def get_market_close():
+    return get_taiwan_stock_info("TAIEX")
+
 def get_evening_zhongzheng():
     weather = get_weather("中正區")
     traffic = get_traffic("office", "post_office")
@@ -228,9 +236,9 @@ def send_scheduled():
                     elif message_type == "market_open":
                         message = get_market_open()
                     elif message_type == "market_mid":
-                        message = get_taiwan_stock_info("TAIEX")
+                        message = get_market_mid()
                     elif message_type == "market_close":
-                        message = get_taiwan_stock_info("TAIEX")
+                        message = get_market_close()
                     elif message_type == "evening_zhongzheng":
                         message = get_evening_zhongzheng()
                     elif message_type == "evening_xindian":
@@ -274,9 +282,9 @@ def handle_message(event):
         elif user_message == "market_open":
             reply = get_market_open()
         elif user_message == "market_mid":
-            reply = get_taiwan_stock_info("TAIEX")
+            reply = get_market_mid()
         elif user_message == "market_close":
-            reply = get_taiwan_stock_info("TAIEX")
+            reply = get_market_close()
         elif user_message == "evening_zhongzheng":
             reply = get_evening_zhongzheng()
         elif user_message == "evening_xindian":
