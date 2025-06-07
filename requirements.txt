@@ -3,3 +3,6 @@ line-bot-sdk==3.5.0
 requests==2.31.0
 beautifulsoup4==4.12.2
 APScheduler==3.10.4
+pytz
+yfinance
+twstock
