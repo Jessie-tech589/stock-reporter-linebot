@@ -344,8 +344,17 @@ def handle_message(event):
 
 
 
-@app.route("/send_scheduled", methods=['GET', 'POST'])
-def send_scheduled():
+@app.route("/send_test", methods=['GET', 'POST'])
+def send_test():
+    try:
+        message = get_morning_briefing()
+        if not message or message.strip() == "":
+            message = "⚠️ 查無資料，請確認關鍵字或稍後再試。"
+        line_bot_api.push_message(os.getenv('LINE_USER_ID'), TextSendMessage(text=message))
+        return "測試訊息已發送"
+    except Exception as e:
+        return f"❌ 測試失敗: {str(e)}"
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
