@@ -10,14 +10,20 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import json
 import datetime as dt
-# 富果行情 API（新版本）
 from fugle_marketdata import RestClient
 
 app = Flask(__name__)
 
 # LINE Bot 設定
-line_bot_api = LineBotApi(os.environ.get('LINE_CHANNEL_ACCESS_TOKEN'))
-handler = WebhookHandler(os.environ.get('LINE_CHANNEL_SECRET'))
+LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
+LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
+LINE_USER_ID = os.environ.get('LINE_USER_ID')  # 你的 LINE User ID
+
+if not all([LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, LINE_USER_ID]):
+    raise ValueError("LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, LINE_USER_ID 必須設定")
+
+line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
+handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # 台灣時區
 TAIWAN_TZ = pytz.timezone('Asia/Taipei')
@@ -29,8 +35,8 @@ SCHEDULED_MESSAGES = [
     {"time": "09:30", "message": "market_open", "days": "weekdays"},
     {"time": "12:00", "message": "market_mid", "days": "weekdays"},
     {"time": "13:45", "message": "market_close", "days": "weekdays"},
-    {"time": "17:30", "message": "evening_zhongzheng", "days": "135"},
-    {"time": "17:30", "message": "evening_xindian", "days": "24"}
+    {"time": "17:30", "message": "evening_zhongzheng", "days": "135"},  # 135 代表週一三五
+    {"time": "17:30", "message": "evening_xindian", "days": "24"}       # 24 代表週二四
 ]
 
 # 固定地址
@@ -112,6 +118,7 @@ def get_taiwan_stock_info(code):
             f"成交量：{volume}"
         )
     except Exception as e:
+        print(f"台股API錯誤: {str(e)}")
         return f"{code}: 取得行情失敗 ({str(e)})"
 
 def get_us_stock_info(symbol):
@@ -129,6 +136,7 @@ def get_us_stock_info(symbol):
         change = latest.get('10. change percent', 'N/A')
         return f"📈 美股\n\n{symbol}: ${price}\n漲跌幅: {change}"
     except Exception as e:
+        print(f"美股API錯誤: {str(e)}")
         return f"{symbol}: 取得資料失敗 ({str(e)})"
 
 def get_news():
@@ -224,7 +232,8 @@ def send_scheduled():
         taiwan_time = datetime.now(TAIWAN_TZ)
         current_time = taiwan_time.strftime('%H:%M')
         current_weekday = taiwan_time.weekday()
-        
+        print(f"[定時推播] 當前時間: {current_time}, 星期: {current_weekday}")  # 增加 log
+
         for schedule in SCHEDULED_MESSAGES:
             if schedule['time'] == current_time:
                 should_send = False
@@ -236,9 +245,10 @@ def send_scheduled():
                     should_send = True
                 elif schedule['days'] == '24' and current_weekday in [1, 3]:
                     should_send = True
-                
+
                 if should_send:
                     message_type = schedule['message']
+                    print(f"[定時推播] 觸發: {message_type}")  # 增加 log
                     if message_type == "morning_briefing":
                         message = get_morning_briefing()
                     elif message_type == "commute_to_work":
@@ -256,17 +266,18 @@ def send_scheduled():
                     else:
                         continue
 
-                    # 訊息內容檢查，避免空訊息
                     if not message or message.strip() == "":
                         message = "⚠️ 查無資料，請確認關鍵字或稍後再試。"
                     try:
-                        line_bot_api.push_message(os.environ.get('LINE_USER_ID'), TextSendMessage(text=message))
+                        print(f"[定時推播] 準備發送: {message_type}")  # 增加 log
+                        line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=message))
+                        print(f"[定時推播] 發送成功: {message_type}")  # 增加 log
                     except Exception as e:
-                        print(f"發送定時訊息錯誤: {str(e)}")
+                        print(f"[定時推播] 發送失敗: {str(e)}")  # 增加 log
 
         return 'OK'
     except Exception as e:
-        print(f"定時推送錯誤: {str(e)}")
+        print(f"[定時推播] 錯誤: {str(e)}")  # 增加 log
         return f"❌ 錯誤: {str(e)}"
 
 @app.route("/")
@@ -278,6 +289,7 @@ def callback():
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
     try:
+        print("[Webhook] 收到訊息")  # 增加 log
         handler.handle(body, signature)
     except InvalidSignatureError:
         abort(400)
@@ -288,6 +300,7 @@ def handle_message(event):
     user_message = event.message.text.strip()
     reply = ""
     try:
+        print(f"[Webhook] 收到用戶訊息: {user_message}")  # 增加 log
         if user_message == "morning_briefing":
             reply = get_morning_briefing()
         elif user_message == "commute_to_work":
@@ -322,8 +335,8 @@ def handle_message(event):
             reply = "📚 LINE Bot 功能列表:"
     except Exception as e:
         reply = "❌ 錯誤: " + str(e)
+        print(f"[Webhook] 處理錯誤: {str(e)}")  # 增加 log
 
-    # 訊息內容檢查，避免空訊息
     if not reply or reply.strip() == "":
         reply = "⚠️ 查無資料，請確認關鍵字或稍後再試。"
 
