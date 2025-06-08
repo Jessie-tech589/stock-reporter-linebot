@@ -226,7 +226,7 @@ def get_evening_xindian():
     traffic = get_traffic("office", "home")
     return f"🌆 下班資訊（新店）\n\n{weather}\n\n{traffic}"
 
-@app.route("/send_scheduled", methods=['POST'])
+@app.route("/send_scheduled", methods=['GET', 'POST'])
 def send_scheduled():
     try:
         taiwan_time = datetime.now(TAIWAN_TZ)
