@@ -342,5 +342,10 @@ def handle_message(event):
 
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
+
+
+@app.route("/send_scheduled", methods=['GET', 'POST'])
+def send_scheduled():
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
