@@ -342,8 +342,6 @@ def handle_message(event):
 
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
-
-
 @app.route("/send_test", methods=['GET', 'POST'])
 def send_test():
     try:
@@ -354,7 +352,6 @@ def send_test():
         return "測試訊息已發送"
     except Exception as e:
         return f"❌ 測試失敗: {str(e)}"
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
