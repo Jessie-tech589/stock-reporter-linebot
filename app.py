@@ -17,7 +17,7 @@ app = Flask(__name__)
 # LINE Bot 設定
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
-LINE_USER_ID = os.environ.get('LINE_USER_ID')  # 你的 LINE User ID
+LINE_USER_ID = os.environ.get('LINE_USER_ID')
 
 if not all([LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, LINE_USER_ID]):
     raise ValueError("LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, LINE_USER_ID 必須設定")
@@ -35,8 +35,8 @@ SCHEDULED_MESSAGES = [
     {"time": "09:30", "message": "market_open", "days": "weekdays"},
     {"time": "12:00", "message": "market_mid", "days": "weekdays"},
     {"time": "13:45", "message": "market_close", "days": "weekdays"},
-    {"time": "17:30", "message": "evening_zhongzheng", "days": "135"},  # 135 代表週一三五
-    {"time": "17:30", "message": "evening_xindian", "days": "24"}       # 24 代表週二四
+    {"time": "17:30", "message": "evening_zhongzheng", "days": "135"},
+    {"time": "17:30", "message": "evening_xindian", "days": "24"}
 ]
 
 # 固定地址
@@ -56,7 +56,7 @@ stock_name_map = {
     "00918": "00918",
     "00878": "00878",
     "鴻準": "2354",
-    "大盤": "TAIEX"  # 富果 API 大盤指數代碼為 "TAIEX"
+    "大盤": "TAIEX"
 }
 
 # 美股中文名稱 ↔ 股票代碼對照表
@@ -76,16 +76,21 @@ def get_weather(location):
     url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization={api_key}&locationName={location}"
     try:
         res = requests.get(url)
+        res.raise_for_status()  # 確認 HTTP 狀態碼正常
         data = res.json()
-        weather = data.get('records', {}).get('location', [])
-        if not weather:
-            return f"❌ {location}天氣\n\n無法取得資料"
-        wx = weather[0].get('weatherElement', [])
-        if not wx:
+        if not data.get('success', False):
+            return f"❌ {location}天氣\n\nAPI 回傳失敗: {data.get('message', '未知錯誤')}"
+        locations = data.get('records', {}).get('location', [])
+        if not locations:
+            return f"❌ {location}天氣\n\n查無此地區資料"
+        # 只取第一個 location
+        weather_elements = locations[0].get('weatherElement', [])
+        if not weather_elements:
             return f"❌ {location}天氣\n\n資料格式錯誤"
-        pop = wx[0]['time'][0]['parameter']['parameterName']
-        temp = wx[4]['time'][0]['parameter']['parameterName']
-        desc = wx[3]['time'][0]['parameter']['parameterName']
+        # 取得各項天氣資料
+        pop = weather_elements[0]['time'][0]['parameter']['parameterName']  # 降雨機率
+        temp = weather_elements[4]['time'][0]['parameter']['parameterName']  # 溫度
+        desc = weather_elements[3]['time'][0]['parameter']['parameterName']  # 天氣描述
         return f"☀️ {location}天氣\n\n🌡️ 溫度: {temp}°C\n💧 降雨機率: {pop}%\n☁️ 天氣: {desc}\n\n資料來源: 中央氣象署"
     except Exception as e:
         print(f"天氣API錯誤: {str(e)}")
@@ -195,13 +200,13 @@ def get_calendar():
     return get_google_calendar_events()
 
 def get_morning_briefing():
-    weather = get_weather("新店")
+    weather = get_weather("新北市")
     us_stocks = get_us_stock_info("NVDA")
     calendar = get_calendar()
     return f"🌞 早安！\n\n{weather}\n\n{us_stocks}\n\n{calendar}"
 
 def get_commute_to_work():
-    weather = get_weather("中山區")
+    weather = get_weather("臺北市")
     traffic = get_traffic("home", "office")
     return f"🚗 上班通勤資訊\n\n{weather}\n\n{traffic}"
 
@@ -217,12 +222,12 @@ def get_market_close():
     return get_taiwan_stock_info("TAIEX")
 
 def get_evening_zhongzheng():
-    weather = get_weather("中正區")
+    weather = get_weather("臺北市")
     traffic = get_traffic("office", "post_office")
     return f"🌆 下班資訊（中正區）\n\n{weather}\n\n{traffic}"
 
 def get_evening_xindian():
-    weather = get_weather("新店")
+    weather = get_weather("新北市")
     traffic = get_traffic("office", "home")
     return f"🌆 下班資訊（新店）\n\n{weather}\n\n{traffic}"
 
@@ -232,7 +237,7 @@ def send_scheduled():
         taiwan_time = datetime.now(TAIWAN_TZ)
         current_time = taiwan_time.strftime('%H:%M')
         current_weekday = taiwan_time.weekday()
-        print(f"[定時推播] 當前時間: {current_time}, 星期: {current_weekday}")  # 增加 log
+        print(f"[定時推播] 當前時間: {current_time}, 星期: {current_weekday}")
 
         for schedule in SCHEDULED_MESSAGES:
             if schedule['time'] == current_time:
@@ -248,7 +253,7 @@ def send_scheduled():
 
                 if should_send:
                     message_type = schedule['message']
-                    print(f"[定時推播] 觸發: {message_type}")  # 增加 log
+                    print(f"[定時推播] 觸發: {message_type}")
                     if message_type == "morning_briefing":
                         message = get_morning_briefing()
                     elif message_type == "commute_to_work":
@@ -269,15 +274,15 @@ def send_scheduled():
                     if not message or message.strip() == "":
                         message = "⚠️ 查無資料，請確認關鍵字或稍後再試。"
                     try:
-                        print(f"[定時推播] 準備發送: {message_type}")  # 增加 log
+                        print(f"[定時推播] 準備發送: {message_type}")
                         line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=message))
-                        print(f"[定時推播] 發送成功: {message_type}")  # 增加 log
+                        print(f"[定時推播] 發送成功: {message_type}")
                     except Exception as e:
-                        print(f"[定時推播] 發送失敗: {str(e)}")  # 增加 log
+                        print(f"[定時推播] 發送失敗: {str(e)}")
 
         return 'OK'
     except Exception as e:
-        print(f"[定時推播] 錯誤: {str(e)}")  # 增加 log
+        print(f"[定時推播] 錯誤: {str(e)}")
         return f"❌ 錯誤: {str(e)}"
 
 @app.route("/")
@@ -289,7 +294,7 @@ def callback():
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
     try:
-        print("[Webhook] 收到訊息")  # 增加 log
+        print("[Webhook] 收到訊息")
         handler.handle(body, signature)
     except InvalidSignatureError:
         abort(400)
@@ -300,7 +305,7 @@ def handle_message(event):
     user_message = event.message.text.strip()
     reply = ""
     try:
-        print(f"[Webhook] 收到用戶訊息: {user_message}")  # 增加 log
+        print(f"[Webhook] 收到用戶訊息: {user_message}")
         if user_message == "morning_briefing":
             reply = get_morning_briefing()
         elif user_message == "commute_to_work":
@@ -327,15 +332,15 @@ def handle_message(event):
             reply = get_news()
         elif user_message == "車流":
             reply = get_traffic()
-        elif user_message in ["新店", "中山區", "中正區"]:
+        elif user_message in ["新北市", "臺北市", "新店區", "中山區", "中正區"]:
             reply = get_weather(user_message)
         elif user_message == "測試":
-            reply = "🤖 系統測試 v42\n\n✅ 連線正常\n✅ 推送系統運作中\n✅ 重寫版本\n\n📋 功能列表:\n• 美股、台股 (真實API)\n• 天氣 (新店/中山區/中正區)\n• 車流 (機車路線)\n• 新聞\n\n⏰ 定時推送:\n• 07:10 早安綜合\n• 08:00 上班通勤\n• 09:30 開盤+新聞\n• 12:00 台股盤中\n• 13:45 台股收盤\n• 17:30 下班資訊"
+            reply = "🤖 系統測試 v42\n\n✅ 連線正常\n✅ 推送系統運作中\n✅ 重寫版本\n\n📋 功能列表:\n• 美股、台股 (真實API)\n• 天氣 (新北市/臺北市/新店區/中山區/中正區)\n• 車流 (機車路線)\n• 新聞\n\n⏰ 定時推送:\n• 07:10 早安綜合\n• 08:00 上班通勤\n• 09:30 開盤+新聞\n• 12:00 台股盤中\n• 13:45 台股收盤\n• 17:30 下班資訊"
         elif user_message == "幫助":
             reply = "📚 LINE Bot 功能列表:"
     except Exception as e:
         reply = "❌ 錯誤: " + str(e)
-        print(f"[Webhook] 處理錯誤: {str(e)}")  # 增加 log
+        print(f"[Webhook] 處理錯誤: {str(e)}")
 
     if not reply or reply.strip() == "":
         reply = "⚠️ 查無資料，請確認關鍵字或稍後再試。"
