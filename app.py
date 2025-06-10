@@ -174,47 +174,36 @@ def get_taiwan_stock_info(code):
         return f"📈 {code}\n\n取得行情失敗\n(可能為API限制或網路問題)"
 
 def get_us_stock_info(symbol):
-    """取得美股資訊 - 修正版本"""
-    api_key = os.environ.get('ALPHA_VANTAGE_API_KEY', '')
-    if not api_key:
-        return f"📈 美股 {symbol}\n\nAlpha Vantage API金鑰未設定"
-    
+    """取得美股資訊 - 使用 Yahoo Finance API"""
     try:
-        url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={api_key}"
-        res = requests.get(url, timeout=10)
-        data = res.json()
+        import yfinance as yf
         
-        # 檢查是否達到API限制
-        if 'Note' in data:
-            return f"📈 美股 {symbol}\n\nAPI 請求已達上限\n請稍後再試或升級付費方案"
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period="1d")
         
-        if 'Global Quote' not in data or not data['Global Quote']:
+        if hist.empty:
             return f"📈 美股 {symbol}\n\n無法取得即時行情\n(可能為非交易時間或代碼錯誤)"
         
-        latest = data['Global Quote']
-        price = latest.get('05. price', 'N/A')
-        change = latest.get('09. change', 'N/A')
-        change_percent = latest.get('10. change percent', 'N/A')
+        current_price = hist['Close'].iloc[-1]
+        prev_close = hist['Open'].iloc[-1]
+        change = current_price - prev_close
+        change_percent = (change / prev_close) * 100 if prev_close != 0 else 0
         
-        # 移除百分比符號進行數值判斷
-        try:
-            change_num = float(change) if change != 'N/A' else 0
-            if change_num > 0:
-                change_symbol = "📈"
-            elif change_num < 0:
-                change_symbol = "📉"
-            else:
-                change_symbol = "📊"
-        except:
+        # 判斷漲跌
+        if change > 0:
+            change_symbol = "📈"
+        elif change < 0:
+            change_symbol = "📉"
+        else:
             change_symbol = "📊"
             
-        return f"{change_symbol} 美股 {symbol}\n\n價格: ${price}\n漲跌: {change}\n漲跌幅: {change_percent}"
+        return f"{change_symbol} 美股 {symbol}\n\n價格: ${current_price:.2f}\n漲跌: {change:+.2f}\n漲跌幅: {change_percent:+.2f}%"
         
-    except requests.exceptions.Timeout:
-        return f"📈 美股 {symbol}\n\n請求逾時，請稍後再試"
+    except ImportError:
+        return f"📈 美股 {symbol}\n\nyfinance 套件未安裝\n請在 requirements.txt 加入 yfinance"
     except Exception as e:
         print(f"美股API錯誤: {str(e)}")
-        return f"📈 美股 {symbol}\n\n取得資料失敗"
+        return f"📈 美股 {symbol}\n\n取得資料失敗: {str(e)}"
 
 def get_news():
     """取得新聞資訊 - 暫時固定內容"""
@@ -248,7 +237,7 @@ def get_traffic(from_place="home", to_place="office"):
         return f"🚗 車流資訊\n\n{from_place} → {to_place}\n\n取得資料失敗\n預估時間: 約25分鐘"
 
 def get_google_calendar_events():
-    """取得 Google 日曆事件"""
+    """取得 Google 日曆事件 - 修正版本"""
     SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
     try:
         creds_json = os.environ.get('GOOGLE_CREDS_JSON')
@@ -259,30 +248,49 @@ def get_google_calendar_events():
         creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         service = build('calendar', 'v3', credentials=creds)
         
-        now = dt.datetime.utcnow().isoformat() + 'Z'
+        # 使用台灣時區
+        taiwan_tz = pytz.timezone('Asia/Taipei')
+        now = datetime.now(taiwan_tz)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        print(f"[Calendar] 查詢時間範圍: {today_start.isoformat()} 到 {today_end.isoformat()}")
+        
         events_result = service.events().list(
             calendarId='primary',
-            timeMin=now,
-            maxResults=5,
+            timeMin=today_start.isoformat(),
+            timeMax=today_end.isoformat(),
+            maxResults=10,
             singleEvents=True,
             orderBy='startTime'
         ).execute()
         
         events = events_result.get('items', [])
+        print(f"[Calendar] 找到事件數量: {len(events)}")
+        
         if not events:
             return '📅 今日行程\n\n今日無安排行程'
         
         result = '📅 今日行程\n\n'
-        for event in events[:3]:  # 只顯示前3個事件
+        for event in events[:5]:  # 只顯示前5個事件
             start = event['start'].get('dateTime', event['start'].get('date'))
             summary = event.get('summary', '無標題')
-            result += f"• {start[:16]} {summary}\n"
+            # 格式化時間顯示
+            if 'T' in start:
+                time_part = start.split('T')[1][:5]  # 取得 HH:MM
+                result += f"• {time_part} {summary}\n"
+            else:
+                result += f"• 全天 {summary}\n"
+            print(f"[Calendar] 事件: {summary} at {start}")
         
         return result
         
+    except json.JSONDecodeError:
+        print("[Calendar] JSON 解析錯誤")
+        return "📅 今日行程\n\nGoogle Calendar 設定格式錯誤"
     except Exception as e:
-        print(f"Google Calendar API錯誤: {str(e)}")
-        return "📅 今日行程\n\n行事曆資料取得失敗"
+        print(f"[Calendar] API錯誤: {str(e)}")
+        return f"📅 今日行程\n\n行事曆資料取得失敗: {str(e)}"
 
 def get_calendar():
     return get_google_calendar_events()
@@ -427,7 +435,7 @@ def handle_message(event):
         elif user_message in ["新北市", "臺北市", "新店區", "中山區", "中正區"]:
             reply = get_weather(user_message)
         elif user_message == "測試":
-            reply = "🤖 系統測試\n\n✅ 連線正常\n✅ 推送系統運作中\n✅ 天氣API已修正\n\n📋 功能列表:\n• 美股、台股查詢\n• 天氣查詢 (新北市/臺北市等)\n• 車流資訊\n• 新聞資訊\n\n⏰ 定時推送:\n• 07:10 早安綜合\n• 08:00 上班通勤\n• 09:30 開盤+新聞\n• 12:00 台股盤中\n• 13:45 台股收盤\n• 17:30 下班資訊"
+            reply = "🤖 系統測試\n\n✅ 連線正常\n✅ 推送系統運作中\n✅ 天氣API已修正\n✅ 美股API已改用Yahoo Finance\n\n📋 功能列表:\n• 美股、台股查詢\n• 天氣查詢 (新北市/臺北市等)\n• 車流資訊\n• 新聞資訊\n• Google日曆\n\n⏰ 定時推送:\n• 07:10 早安綜合\n• 08:00 上班通勤\n• 09:30 開盤+新聞\n• 12:00 台股盤中\n• 13:45 台股收盤\n• 17:30 下班資訊"
         elif user_message == "幫助":
             reply = "📚 LINE Bot 功能列表:\n\n🔹 天氣查詢: 輸入地區名稱\n🔹 台股查詢: 台股 股票名稱\n🔹 美股查詢: 美股 股票名稱\n🔹 新聞: 輸入「新聞」\n🔹 車流: 輸入「車流」\n🔹 測試: 輸入「測試」\n\n⏰ 自動推送時間:\n• 07:10 早安資訊\n• 08:00 通勤資訊\n• 09:30 開盤資訊\n• 12:00 盤中資訊\n• 13:45 收盤資訊\n• 17:30 下班資訊"
         
