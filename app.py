@@ -11,6 +11,7 @@ from googleapiclient.discovery import build
 import json
 import datetime as dt
 from fugle_marketdata import RestClient
+import time
 
 app = Flask(__name__)
 
@@ -192,27 +193,37 @@ def get_us_stock_info(symbol):
         return f"📈 美股 {symbol}\n\nyfinance 套件未安裝\n請在 requirements.txt 加入 yfinance"
     except Exception as e:
         print(f"美股API錯誤: {str(e)}")
+        if "Too Many Requests" in str(e):
+            return f"📈 美股 {symbol}\n\n取得資料失敗: Too Many Requests. Rate limited. Try after a while."
         return f"📈 美股 {symbol}\n\n取得資料失敗: {str(e)}"
 
 def get_multiple_us_stocks():
-    """取得多支美股資訊"""
-    symbols = ["NVDA", "TSLA", "AAPL", "GOOGL", "MSFT"]
+    """取得多支美股資訊 - 加入延遲避免頻率限制"""
+    symbols = ["NVDA", "TSLA", "AAPL", "GOOGL", "MSFT", "SMCI"]  # 加入美超微 SMCI
     results = []
     
-    for symbol in symbols:
+    for i, symbol in enumerate(symbols):
         stock_info = get_us_stock_info(symbol)
         results.append(stock_info)
+        
+        # 每次請求後延遲1秒，避免頻率限制（最後一個不需要延遲）
+        if i < len(symbols) - 1:
+            time.sleep(1)
     
     return "\n\n".join(results)
 
 def get_multiple_taiwan_stocks():
-    """取得多支台股資訊"""
+    """取得多支台股資訊 - 加入延遲避免頻率限制"""
     stocks = ["TAIEX", "2330", "2303", "2609"]
     results = []
     
-    for stock in stocks:
+    for i, stock in enumerate(stocks):
         stock_info = get_taiwan_stock_info(stock)
         results.append(stock_info)
+        
+        # 每次請求後延遲0.5秒，避免頻率限制
+        if i < len(stocks) - 1:
+            time.sleep(0.5)
     
     return "\n\n".join(results)
 
@@ -266,6 +277,7 @@ def get_google_calendar_events():
         
         print(f"[Calendar] 查詢時間範圍: {today_start.isoformat()} 到 {today_end.isoformat()}")
         
+        # 嘗試查詢主要日曆
         events_result = service.events().list(
             calendarId='primary',
             timeMin=today_start.isoformat(),
@@ -445,7 +457,7 @@ def handle_message(event):
         elif user_message in ["新北市", "臺北市", "新店區", "中山區", "中正區"]:
             reply = get_weather(user_message)
         elif user_message == "測試":
-            reply = "🤖 系統測試\n\n✅ 連線正常\n✅ 推送系統運作中\n✅ 天氣API已修正\n✅ 美股API已改用Yahoo Finance\n✅ 支援多支股票查詢\n\n📋 功能列表:\n• 美股、台股查詢\n• 天氣查詢\n• 車流資訊\n• 新聞資訊\n• Google日曆\n\n⏰ 定時推送:\n• 07:10 早安綜合（含多支美股台股）\n• 08:00 上班通勤\n• 09:30 開盤+新聞\n• 12:00 台股盤中\n• 13:45 台股收盤\n• 17:30 下班資訊"
+            reply = "🤖 系統測試\n\n✅ 連線正常\n✅ 推送系統運作中\n✅ 天氣API已修正\n✅ 美股API已改用Yahoo Finance\n✅ 支援多支股票查詢\n✅ 已加入美超微(SMCI)\n✅ 加入API請求延遲機制\n\n📋 功能列表:\n• 美股、台股查詢\n• 天氣查詢\n• 車流資訊\n• 新聞資訊\n• Google日曆\n\n⏰ 定時推送:\n• 07:10 早安綜合（含6支美股+4支台股）\n• 08:00 上班通勤\n• 09:30 開盤+新聞\n• 12:00 台股盤中\n• 13:45 台股收盤\n• 17:30 下班資訊"
         elif user_message == "幫助":
             reply = "📚 LINE Bot 功能列表:\n\n🔹 天氣查詢: 輸入地區名稱\n🔹 台股查詢: 台股 股票名稱 或 輸入「台股」\n🔹 美股查詢: 美股 股票名稱 或 輸入「美股」\n🔹 新聞: 輸入「新聞」\n🔹 車流: 輸入「車流」\n🔹 測試: 輸入「測試」\n\n⏰ 自動推送時間:\n• 07:10 早安資訊（含多支美股台股）\n• 08:00 通勤資訊\n• 09:30 開盤資訊\n• 12:00 盤中資訊\n• 13:45 收盤資訊\n• 17:30 下班資訊"
         
