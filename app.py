@@ -64,7 +64,9 @@ us_stock_name_map = {
     "輝達": "NVDA",
     "美超微": "SMCI",
     "google": "GOOGL",
-    "蘋果": "AAPL"
+    "蘋果": "AAPL",
+    "特斯拉": "TSLA",
+    "微軟": "MSFT"
 }
 
 # ==================== 核心功能函數 ====================
@@ -81,29 +83,19 @@ def get_weather(location):
         res.raise_for_status()
         data = res.json()
         
-        # 檢查 API 回傳狀態
         if not data.get('success', False):
             error_msg = data.get('message', '未知錯誤')
             return f"❌ {location}天氣\n\nAPI 回傳失敗: {error_msg}"
         
-        # 取得地區資料
         locations = data.get('records', {}).get('location', [])
         if not locations:
             return f"❌ {location}天氣\n\n查無此地區資料"
         
-        # 取得天氣要素
         weather_elements = locations[0].get('weatherElement', [])
         if len(weather_elements) < 5:
             return f"❌ {location}天氣\n\n資料格式不完整"
         
-        # 正確解析天氣資料（根據中央氣象署 API 文件）
         try:
-            # weatherElement 索引對應：
-            # 0: Wx (天氣現象)
-            # 1: PoP (降雨機率)
-            # 2: MinT (最低溫)
-            # 3: CI (舒適度)
-            # 4: MaxT (最高溫)
             wx = weather_elements[0]['time'][0]['parameter']['parameterName']  # 天氣現象
             pop = weather_elements[1]['time'][0]['parameter']['parameterName']  # 降雨機率
             min_temp = weather_elements[2]['time'][0]['parameter']['parameterName']  # 最低溫
@@ -134,7 +126,6 @@ def get_taiwan_stock_info(code):
     try:
         client = RestClient(api_key=api_key)
         
-        # 處理大盤指數
         if code == "TAIEX":
             symbol_id = "IX0001"  # 大盤指數正確代碼
         else:
@@ -153,7 +144,6 @@ def get_taiwan_stock_info(code):
         volume = info.get('volume', 'N/A')
         time_str = info.get('at', 'N/A')
         
-        # 判斷漲跌
         if isinstance(change, (int, float)) and change > 0:
             change_symbol = "📈"
         elif isinstance(change, (int, float)) and change < 0:
@@ -189,7 +179,6 @@ def get_us_stock_info(symbol):
         change = current_price - prev_close
         change_percent = (change / prev_close) * 100 if prev_close != 0 else 0
         
-        # 判斷漲跌
         if change > 0:
             change_symbol = "📈"
         elif change < 0:
@@ -204,6 +193,28 @@ def get_us_stock_info(symbol):
     except Exception as e:
         print(f"美股API錯誤: {str(e)}")
         return f"📈 美股 {symbol}\n\n取得資料失敗: {str(e)}"
+
+def get_multiple_us_stocks():
+    """取得多支美股資訊"""
+    symbols = ["NVDA", "TSLA", "AAPL", "GOOGL", "MSFT"]
+    results = []
+    
+    for symbol in symbols:
+        stock_info = get_us_stock_info(symbol)
+        results.append(stock_info)
+    
+    return "\n\n".join(results)
+
+def get_multiple_taiwan_stocks():
+    """取得多支台股資訊"""
+    stocks = ["TAIEX", "2330", "2303", "2609"]
+    results = []
+    
+    for stock in stocks:
+        stock_info = get_taiwan_stock_info(stock)
+        results.append(stock_info)
+    
+    return "\n\n".join(results)
 
 def get_news():
     """取得新聞資訊 - 暫時固定內容"""
@@ -248,7 +259,6 @@ def get_google_calendar_events():
         creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         service = build('calendar', 'v3', credentials=creds)
         
-        # 使用台灣時區
         taiwan_tz = pytz.timezone('Asia/Taipei')
         now = datetime.now(taiwan_tz)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -272,12 +282,11 @@ def get_google_calendar_events():
             return '📅 今日行程\n\n今日無安排行程'
         
         result = '📅 今日行程\n\n'
-        for event in events[:5]:  # 只顯示前5個事件
+        for event in events[:5]:
             start = event['start'].get('dateTime', event['start'].get('date'))
             summary = event.get('summary', '無標題')
-            # 格式化時間顯示
             if 'T' in start:
-                time_part = start.split('T')[1][:5]  # 取得 HH:MM
+                time_part = start.split('T')[1][:5]
                 result += f"• {time_part} {summary}\n"
             else:
                 result += f"• 全天 {summary}\n"
@@ -299,9 +308,10 @@ def get_calendar():
 
 def get_morning_briefing():
     weather = get_weather("新北市")
-    us_stocks = get_us_stock_info("NVDA")
+    us_stocks = get_multiple_us_stocks()
+    taiwan_stocks = get_multiple_taiwan_stocks()
     calendar = get_calendar()
-    return f"🌞 早安！\n\n{weather}\n\n{us_stocks}\n\n{calendar}"
+    return f"🌞 早安！\n\n{weather}\n\n📈 美股行情\n{us_stocks}\n\n📊 台股行情\n{taiwan_stocks}\n\n{calendar}"
 
 def get_commute_to_work():
     weather = get_weather("臺北市")
@@ -309,15 +319,15 @@ def get_commute_to_work():
     return f"🚗 上班通勤資訊\n\n{weather}\n\n{traffic}"
 
 def get_market_open():
-    stocks = get_taiwan_stock_info("TAIEX")
+    stocks = get_multiple_taiwan_stocks()
     news = get_news()
     return f"📈 台股開盤\n\n{stocks}\n\n{news}"
 
 def get_market_mid():
-    return f"📊 台股盤中\n\n{get_taiwan_stock_info('TAIEX')}"
+    return f"📊 台股盤中\n\n{get_multiple_taiwan_stocks()}"
 
 def get_market_close():
-    return f"📉 台股收盤\n\n{get_taiwan_stock_info('TAIEX')}"
+    return f"📉 台股收盤\n\n{get_multiple_taiwan_stocks()}"
 
 def get_evening_zhongzheng():
     weather = get_weather("臺北市")
@@ -356,7 +366,6 @@ def send_scheduled():
                     message_type = schedule['message']
                     print(f"[定時推播] 觸發: {message_type}")
                     
-                    # 根據訊息類型取得對應內容
                     message_functions = {
                         "morning_briefing": get_morning_briefing,
                         "commute_to_work": get_commute_to_work,
@@ -409,7 +418,6 @@ def handle_message(event):
     try:
         print(f"[Webhook] 收到用戶訊息: {user_message}")
         
-        # 預設指令處理
         command_handlers = {
             "morning_briefing": get_morning_briefing,
             "commute_to_work": get_commute_to_work,
@@ -419,7 +427,9 @@ def handle_message(event):
             "evening_zhongzheng": get_evening_zhongzheng,
             "evening_xindian": get_evening_xindian,
             "新聞": get_news,
-            "車流": get_traffic
+            "車流": get_traffic,
+            "美股": get_multiple_us_stocks,
+            "台股": get_multiple_taiwan_stocks
         }
         
         if user_message in command_handlers:
@@ -435,9 +445,9 @@ def handle_message(event):
         elif user_message in ["新北市", "臺北市", "新店區", "中山區", "中正區"]:
             reply = get_weather(user_message)
         elif user_message == "測試":
-            reply = "🤖 系統測試\n\n✅ 連線正常\n✅ 推送系統運作中\n✅ 天氣API已修正\n✅ 美股API已改用Yahoo Finance\n\n📋 功能列表:\n• 美股、台股查詢\n• 天氣查詢 (新北市/臺北市等)\n• 車流資訊\n• 新聞資訊\n• Google日曆\n\n⏰ 定時推送:\n• 07:10 早安綜合\n• 08:00 上班通勤\n• 09:30 開盤+新聞\n• 12:00 台股盤中\n• 13:45 台股收盤\n• 17:30 下班資訊"
+            reply = "🤖 系統測試\n\n✅ 連線正常\n✅ 推送系統運作中\n✅ 天氣API已修正\n✅ 美股API已改用Yahoo Finance\n✅ 支援多支股票查詢\n\n📋 功能列表:\n• 美股、台股查詢\n• 天氣查詢\n• 車流資訊\n• 新聞資訊\n• Google日曆\n\n⏰ 定時推送:\n• 07:10 早安綜合（含多支美股台股）\n• 08:00 上班通勤\n• 09:30 開盤+新聞\n• 12:00 台股盤中\n• 13:45 台股收盤\n• 17:30 下班資訊"
         elif user_message == "幫助":
-            reply = "📚 LINE Bot 功能列表:\n\n🔹 天氣查詢: 輸入地區名稱\n🔹 台股查詢: 台股 股票名稱\n🔹 美股查詢: 美股 股票名稱\n🔹 新聞: 輸入「新聞」\n🔹 車流: 輸入「車流」\n🔹 測試: 輸入「測試」\n\n⏰ 自動推送時間:\n• 07:10 早安資訊\n• 08:00 通勤資訊\n• 09:30 開盤資訊\n• 12:00 盤中資訊\n• 13:45 收盤資訊\n• 17:30 下班資訊"
+            reply = "📚 LINE Bot 功能列表:\n\n🔹 天氣查詢: 輸入地區名稱\n🔹 台股查詢: 台股 股票名稱 或 輸入「台股」\n🔹 美股查詢: 美股 股票名稱 或 輸入「美股」\n🔹 新聞: 輸入「新聞」\n🔹 車流: 輸入「車流」\n🔹 測試: 輸入「測試」\n\n⏰ 自動推送時間:\n• 07:10 早安資訊（含多支美股台股）\n• 08:00 通勤資訊\n• 09:30 開盤資訊\n• 12:00 盤中資訊\n• 13:45 收盤資訊\n• 17:30 下班資訊"
         
     except Exception as e:
         reply = "❌ 處理訊息時發生錯誤: " + str(e)
