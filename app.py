@@ -149,27 +149,36 @@ def get_taiwan_stock_info(code):
 def get_us_stock_info(symbol):
     try:
         import yfinance as yf
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(period="1d")
-        if hist.empty:
-            return f"📈 美股 {symbol}\n\n無法取得即時行情\n(可能為非交易時間或代碼錯誤)"
-        current_price = hist['Close'].iloc[-1]
-        prev_close = hist['Open'].iloc[-1]
-        change = current_price - prev_close
-        change_percent = (change / prev_close) * 100 if prev_close != 0 else 0
-        if change > 0:
-            change_symbol = "📈"
-        elif change < 0:
-            change_symbol = "📉"
-        else:
-            change_symbol = "📊"
-        return f"{change_symbol} 美股 {symbol}\n\n價格: ${current_price:.2f}\n漲跌: {change:+.2f}\n漲跌幅: {change_percent:+.2f}%"
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                ticker = yf.Ticker(symbol)
+                hist = ticker.history(period="1d")
+                if hist.empty:
+                    return f"📈 美股 {symbol}\n\n無法取得即時行情\n(可能為非交易時間或代碼錯誤)"
+                current_price = hist['Close'].iloc[-1]
+                prev_close = hist['Open'].iloc[-1]
+                change = current_price - prev_close
+                change_percent = (change / prev_close) * 100 if prev_close != 0 else 0
+                if change > 0:
+                    change_symbol = "📈"
+                elif change < 0:
+                    change_symbol = "📉"
+                else:
+                    change_symbol = "📊"
+                return f"{change_symbol} 美股 {symbol}\n\n價格: ${current_price:.2f}\n漲跌: {change:+.2f}\n漲跌幅: {change_percent:+.2f}%"
+            except Exception as e:
+                print(f"美股API錯誤 (嘗試 {attempt+1}/3): {str(e)}")
+                if "429" in str(e) or "Too Many Requests" in str(e):
+                    time.sleep(5)
+                    continue
+                else:
+                    raise
+        return f"📈 美股 {symbol}\n\n取得資料失敗: Too Many Requests. Rate limited. Try after a while."
     except ImportError:
         return f"📈 美股 {symbol}\n\nyfinance 套件未安裝\n請在 requirements.txt 加入 yfinance"
     except Exception as e:
         print(f"美股API錯誤: {str(e)}")
-        if "Too Many Requests" in str(e):
-            return f"📈 美股 {symbol}\n\n取得資料失敗: Too Many Requests. Rate limited. Try after a while."
         return f"📈 美股 {symbol}\n\n取得資料失敗: {str(e)}"
 
 def get_multiple_us_stocks():
@@ -228,8 +237,6 @@ def get_google_calendar_events():
         now = datetime.now(taiwan_tz)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
-        print(f"[Calendar] 查詢時間範圍: {today_start.isoformat()} 到 {today_end.isoformat()}")
-        # 這裡改成你的 Gmail 行事曆 ID
         events_result = service.events().list(
             calendarId='wjessie@gmail.com',
             timeMin=today_start.isoformat(),
@@ -239,7 +246,6 @@ def get_google_calendar_events():
             orderBy='startTime'
         ).execute()
         events = events_result.get('items', [])
-        print(f"[Calendar] 找到事件數量: {len(events)}")
         if not events:
             return '📅 今日行程\n\n今日無安排行程'
         result = '📅 今日行程\n\n'
@@ -251,10 +257,8 @@ def get_google_calendar_events():
                 result += f"• {time_part} {summary}\n"
             else:
                 result += f"• 全天 {summary}\n"
-            print(f"[Calendar] 事件: {summary} at {start}")
         return result
     except json.JSONDecodeError:
-        print("[Calendar] JSON 解析錯誤")
         return "📅 今日行程\n\nGoogle Calendar 設定格式錯誤"
     except Exception as e:
         print(f"[Calendar] API錯誤: {str(e)}")
@@ -306,8 +310,6 @@ def send_scheduled():
         taiwan_time = datetime.now(TAIWAN_TZ)
         current_time = taiwan_time.strftime('%H:%M')
         current_weekday = taiwan_time.weekday()
-        print(f"[定時推播] 當前時間: {current_time}, 星期: {current_weekday}")
-
         for schedule in SCHEDULED_MESSAGES:
             if schedule['time'] == current_time:
                 should_send = False
@@ -321,7 +323,6 @@ def send_scheduled():
                     should_send = True
                 if should_send:
                     message_type = schedule['message']
-                    print(f"[定時推播] 觸發: {message_type}")
                     message_functions = {
                         "morning_briefing": get_morning_briefing,
                         "commute_to_work": get_commute_to_work,
@@ -336,9 +337,7 @@ def send_scheduled():
                         if not message or message.strip() == "":
                             message = "⚠️ 查無資料，請確認關鍵字或稍後再試。"
                         try:
-                            print(f"[定時推播] 準備發送: {message_type}")
                             line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=message))
-                            print(f"[定時推播] 發送成功: {message_type}")
                         except Exception as e:
                             print(f"[定時推播] 發送失敗: {str(e)}")
         return 'OK'
@@ -355,7 +354,6 @@ def callback():
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
     try:
-        print("[Webhook] 收到訊息")
         handler.handle(body, signature)
     except InvalidSignatureError:
         abort(400)
@@ -366,7 +364,6 @@ def handle_message(event):
     user_message = event.message.text.strip()
     reply = ""
     try:
-        print(f"[Webhook] 收到用戶訊息: {user_message}")
         command_handlers = {
             "morning_briefing": get_morning_briefing,
             "commute_to_work": get_commute_to_work,
