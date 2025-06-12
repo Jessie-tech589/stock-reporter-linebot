@@ -201,39 +201,6 @@ def get_google_calendar_events():
     except Exception as e:
         return f"📅 今日行程\n\n行事曆資料取得失敗: {str(e)}"
 
-# ====== US Market Open 查詢 ======
-def get_us_market_open():
-    try:
-        import yfinance as yf
-        symbols = ["NVDA", "TSLA", "AAPL", "GOOGL", "MSFT", "SMCI"]
-        reply = "📈 美股開盤快訊\n\n"
-        for symbol in symbols:
-            try:
-                ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="1d")
-                if hist.empty:
-                    reply += f"{symbol}: ❌ 查無資料\n"
-                    continue
-                current_price = hist['Close'].iloc[-1]
-                prev_close = hist['Open'].iloc[-1]
-                change = current_price - prev_close
-                change_percent = (change / prev_close) * 100 if prev_close != 0 else 0
-                if change > 0:
-                    change_symbol = "📈"
-                elif change < 0:
-                    change_symbol = "📉"
-                else:
-                    change_symbol = "📊"
-                reply += (f"{change_symbol} {symbol}\n"
-                          f"價格: ${current_price:.2f}\n"
-                          f"漲跌: {change:+.2f}\n"
-                          f"漲跌幅: {change_percent:+.2f}%\n\n")
-                time.sleep(1)
-            except Exception as e:
-                reply += f"{symbol}: ❌ 查詢失敗 {str(e)}\n"
-        return reply
-    except Exception as e:
-        return f"❌ 美股開盤查詢失敗: {str(e)}"
 
 # ====== 定時推播排程 ======
 SCHEDULED_MESSAGES = [
@@ -280,6 +247,7 @@ def get_evening_xindian():
     weather = get_weather("新北市新店區")
     return f"🌆 下班（返家）\n\n{weather}\n\n{traffic}"
 
+# ====== US Market Open 查詢 ======
 def get_us_market_report():
     # 你可以指定要看哪些美股
     symbols = ["NVDA", "TSLA", "AAPL", "GOOGL", "MSFT", "SMCI"]
