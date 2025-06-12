@@ -1,3 +1,15 @@
+# ==========================================================
+# Jessie 專案 app_v1.1.py 完整正式版
+# 整理日: 2025/06/12 晚間
+# 說明:
+# - 定時推播完整 (早上/中午/晚上/美股)
+# - 功能完整 (天氣 / 車流 / 行事曆 / 台股 / 美股 / News)
+# - get_us_market_open() 已移除，改用 get_us_market_report()
+# - CUSTOM_ROUTES 已設定機車路線
+# - 可直接 deploy 至 Render 使用
+# - 建議本檔案備份為 app_v1.1.py
+# ==========================================================
+
 import os
 import requests
 from datetime import datetime
@@ -60,7 +72,6 @@ stock_name_map = {
 us_stock_name_map = {
     "輝達": "NVDA", "美超微": "SMCI", "google": "GOOGL", "蘋果": "AAPL", "特斯拉": "TSLA", "微軟": "MSFT"
 }
-
 # ====== 自訂機車路線查詢 ======
 def get_custom_traffic(route_name):
     if route_name not in CUSTOM_ROUTES:
@@ -163,6 +174,7 @@ def get_news(keyword=""):
         return reply
     except Exception as e:
         return f"❌ 新聞查詢失敗：{e}"
+
 # ====== Google Calendar 查詢 ======
 def get_google_calendar_events():
     SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
@@ -201,7 +213,40 @@ def get_google_calendar_events():
     except Exception as e:
         return f"📅 今日行程\n\n行事曆資料取得失敗: {str(e)}"
 
+# ====== 美股查詢 ======
+def get_us_stock_info(symbol):
+    try:
+        import yfinance as yf
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period="1d")
+        if hist.empty:
+            return f"📈 美股 {symbol}\n\n無法取得即時行情"
+        current_price = hist['Close'].iloc[-1]
+        prev_close = hist['Open'].iloc[-1]
+        change = current_price - prev_close
+        change_percent = (change / prev_close) * 100 if prev_close != 0 else 0
+        if change > 0:
+            change_symbol = "📈"
+        elif change < 0:
+            change_symbol = "📉"
+        else:
+            change_symbol = "📊"
+        return (f"{change_symbol} 美股 {symbol}\n\n"
+                f"價格: ${current_price:.2f}\n"
+                f"漲跌: {change:+.2f}\n"
+                f"漲跌幅: {change_percent:+.2f}%")
+    except Exception as e:
+        return f"📈 美股 {symbol}\n\n取得資料失敗: {str(e)}"
 
+# ====== US Market Report ======
+def get_us_market_report():
+    symbols = ["NVDA", "TSLA", "AAPL", "GOOGL", "MSFT", "SMCI"]
+    messages = []
+    for symbol in symbols:
+        msg = get_us_stock_info(symbol)
+        messages.append(msg)
+        time.sleep(1)
+    return "🌎 美股行情報告\n\n" + "\n\n".join(messages)
 # ====== 定時推播排程 ======
 SCHEDULED_MESSAGES = [
     {"time": "07:10", "message": "morning_briefing", "days": "daily"},
@@ -214,7 +259,6 @@ SCHEDULED_MESSAGES = [
     {"time": "21:30", "message": "us_market_report", "days": "weekdays"},
     {"time": "23:00", "message": "us_market_report", "days": "weekdays"}
 ]
-
 
 # ====== 各類組合訊息 ======
 def get_morning_briefing():
@@ -246,17 +290,6 @@ def get_evening_xindian():
     traffic = get_custom_traffic("公司到家")
     weather = get_weather("新北市新店區")
     return f"🌆 下班（返家）\n\n{weather}\n\n{traffic}"
-
-# ====== US Market Open 查詢 ======
-def get_us_market_report():
-    # 你可以指定要看哪些美股
-    symbols = ["NVDA", "TSLA", "AAPL", "GOOGL", "MSFT", "SMCI"]
-    messages = []
-    for symbol in symbols:
-        msg = get_us_stock_info(symbol)
-        messages.append(msg)
-    return "🌎 美股行情報告\n\n" + "\n\n".join(messages)
-
 
 # ====== 強化版 send_scheduled ======
 @app.route("/send_scheduled", methods=['GET', 'POST'])
@@ -317,7 +350,6 @@ def send_scheduled():
     except Exception as e:
         print(f"[定時推播] 整體錯誤: {str(e)}")
         return f"❌ 錯誤: {str(e)}"
-
 # ====== LINE webhook & 指令處理 ======
 @app.route("/", methods=['GET'])
 def home():
@@ -357,10 +389,21 @@ def handle_message(event):
         reply = get_us_stock_info(symbol)
     elif msg == "行事曆":
         reply = get_google_calendar_events()
+    elif msg == "美股報告":
+        reply = get_us_market_report()
     else:
-        reply = "👋 功能：\n• 「家到公司」「公司到家」「公司到郵局」查詢機車路線\n• 「天氣區名」「新聞關鍵字」\n• 「台股 名稱」/「美股 名稱」查即時股價\n• 「行事曆」查今日Google行程\n\n⏰ 早中晚有自動推播"
+        reply = ("👋 功能列表：\n"
+                 "• 🚦 車流查詢：家到公司 / 公司到家 / 公司到郵局\n"
+                 "• 🌤️ 天氣：天氣 + 區名\n"
+                 "• 📰 新聞：新聞 + 關鍵字\n"
+                 "• 📈 台股：台股 + 股票名稱\n"
+                 "• 🌎 美股：美股 + 股票名稱\n"
+                 "• 📅 行事曆\n"
+                 "• 🌎 美股報告 → 一次看多支美股\n"
+                 "\n⏰ 早中晚有自動推播")
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
+# ====== 啟動 Flask 應用 ======
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
