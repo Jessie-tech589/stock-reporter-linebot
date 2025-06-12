@@ -244,8 +244,10 @@ SCHEDULED_MESSAGES = [
     {"time": "13:45", "message": "market_close", "days": "weekdays"},
     {"time": "17:30", "message": "evening_zhongzheng", "days": "135"},
     {"time": "17:30", "message": "evening_xindian", "days": "24"},
-    {"time": "21:00", "message": "us_market_open", "days": "weekdays"}  # 測試用
+    {"time": "21:30", "message": "us_market_report", "days": "weekdays"},
+    {"time": "23:00", "message": "us_market_report", "days": "weekdays"}
 ]
+
 
 # ====== 各類組合訊息 ======
 def get_morning_briefing():
@@ -277,6 +279,16 @@ def get_evening_xindian():
     traffic = get_custom_traffic("公司到家")
     weather = get_weather("新北市新店區")
     return f"🌆 下班（返家）\n\n{weather}\n\n{traffic}"
+
+def get_us_market_report():
+    # 你可以指定要看哪些美股
+    symbols = ["NVDA", "TSLA", "AAPL", "GOOGL", "MSFT", "SMCI"]
+    messages = []
+    for symbol in symbols:
+        msg = get_us_stock_info(symbol)
+        messages.append(msg)
+    return "🌎 美股行情報告\n\n" + "\n\n".join(messages)
+
 
 # ====== 強化版 send_scheduled ======
 @app.route("/send_scheduled", methods=['GET', 'POST'])
@@ -311,8 +323,9 @@ def send_scheduled():
                         "market_close": get_market_close,
                         "evening_zhongzheng": get_evening_zhongzheng,
                         "evening_xindian": get_evening_xindian,
-                        "us_market_open": get_us_market_open
+                        "us_market_report": get_us_market_report
                     }
+
                     print(f"[定時推播] 觸發排程: {schedule['time']} - {message_type}")
 
                     try:
