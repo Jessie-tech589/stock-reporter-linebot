@@ -28,88 +28,114 @@ GOOGLE_CREDS_JSON = os.environ.get('GOOGLE_CREDS_JSON')
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# 股票代碼映射表
+# 股票代碼映射表 - 按照用戶指定的股票清單
 STOCK_MAPPING = {
+    # 美股
     "輝達": "NVDA",
-    "蘋果": "AAPL", 
-    "微軟": "MSFT",
-    "谷歌": "GOOGL",
-    "亞馬遜": "AMZN",
-    "特斯拉": "TSLA",
-    "台積電": "TSM",
-    "聯發科": "2454.TW",
-    "鴻海": "2317.TW",
-    "中華電": "2412.TW",
+    "美超微": "SMCI",
+    "google": "GOOGL",
+    
+    # 台股
+    "台積電": "2330.TW",
+    "聯電": "2303.TW",
+    "鴻準": "2354.TW",
+    "00918": "00918.TW",
+    "00878": "00878.TW",
+    "元大美債20年": "00679B.TW",
+    "群益25年美債": "00723B.TW",
+    "仁寶": "2324.TW",
+    "陽明": "2609.TW",
+    "華航": "2610.TW",
+    "長榮航": "2618.TW",
+    
+    # 常用代碼
     "2330": "2330.TW",
-    "0050": "0050.TW",
-    "0056": "0056.TW"
+    "2303": "2303.TW",
+    "2354": "2354.TW",
+    "2324": "2324.TW",
+    "2609": "2609.TW",
+    "2610": "2610.TW",
+    "2618": "2618.TW"
 }
 
 def get_stock_data(query):
     try:
         # 處理用戶輸入
-        original_query = query
-        if "美股" in query:
-            stock_name = query.replace("美股", "").strip()
+        original_query = query.strip()
+        
+        # 如果只輸入「美股」或「台股」，給予提示
+        if original_query in ["美股", "台股"]:
+            return f"請輸入具體股票名稱，例如：\n美股 輝達\n台股 台積電\n或直接輸入：輝達、台積電"
+        
+        # 處理股票查詢
+        if "美股" in original_query:
+            stock_name = original_query.replace("美股", "").strip()
+            if not stock_name:
+                return "請輸入股票名稱，例如：美股 輝達"
             symbol = STOCK_MAPPING.get(stock_name, stock_name)
-        elif "台股" in query:
-            stock_name = query.replace("台股", "").strip()
+        elif "台股" in original_query:
+            stock_name = original_query.replace("台股", "").strip()
+            if not stock_name:
+                return "請輸入股票名稱，例如：台股 台積電"
             if stock_name.isdigit():
                 symbol = f"{stock_name}.TW"
             else:
                 symbol = STOCK_MAPPING.get(stock_name, f"{stock_name}.TW")
         else:
             # 直接查詢
-            symbol = STOCK_MAPPING.get(query, query)
+            symbol = STOCK_MAPPING.get(original_query, original_query)
         
         print(f"Original query: {original_query}, Mapped symbol: {symbol}")
         
+        # 檢查是否為週末（美股和台股都休市）
+        now = datetime.now(pytz.timezone('US/Eastern'))
+        if now.weekday() >= 5:  # 週六、週日
+            return f"📊 {symbol}\n🕒 市場休市中（週末）\n請於交易日查詢即時股價"
+        
+        # 使用更穩定的方式取得股票資料
         stock = yf.Ticker(symbol)
-        hist = stock.history(period="1d")
         
-        if hist.empty:
-            print(f"No data found for symbol: {symbol}")
-            return f"❌ 找不到股票代碼：{symbol}"
+        # 嘗試多種方式取得資料
+        try:
+            # 方法1：取得即時資料
+            info = stock.info
+            current_price = info.get('regularMarketPrice') or info.get('currentPrice')
+            prev_close = info.get('previousClose')
+            company_name = info.get('longName') or info.get('shortName') or symbol
+            
+            if current_price and prev_close:
+                change = current_price - prev_close
+                change_percent = (change / prev_close) * 100
+                change_emoji = "📈" if change > 0 else "📉" if change < 0 else "➡️"
+                
+                return f"📊 {company_name}\n💰 ${current_price:.2f}\n{change_emoji} {change:+.2f} ({change_percent:+.1f}%)"
+        except:
+            pass
         
-        info = stock.info
-        current_price = hist['Close'].iloc[-1]
-        prev_close = info.get('previousClose', current_price)
-        change = current_price - prev_close
-        change_percent = (change / prev_close) * 100 if prev_close != 0 else 0
+        # 方法2：使用歷史資料
+        try:
+            hist = stock.history(period="5d")
+            if not hist.empty:
+                current_price = hist['Close'].iloc[-1]
+                prev_close = hist['Close'].iloc[-2] if len(hist) > 1 else current_price
+                change = current_price - prev_close
+                change_percent = (change / prev_close) * 100 if prev_close != 0 else 0
+                change_emoji = "📈" if change > 0 else "📉" if change < 0 else "➡️"
+                
+                return f"📊 {symbol}\n💰 ${current_price:.2f}\n{change_emoji} {change:+.2f} ({change_percent:+.1f}%)\n⚠️ 使用歷史資料"
+        except:
+            pass
         
-        change_emoji = "📈" if change > 0 else "📉" if change < 0 else "➡️"
-        
-        company_name = info.get('longName', info.get('shortName', symbol))
-        
-        return f"📊 {company_name}\n💰 ${current_price:.2f}\n{change_emoji} {change:+.2f} ({change_percent:+.1f}%)"
+        return f"❌ 無法取得 {symbol} 股價\n可能原因：\n• 股票代碼錯誤\n• 市場休市\n• 網路連線問題"
         
     except Exception as e:
-        print(f"Failed to get ticker '{query}' reason: {e}")
-        return f"❌ 無法取得 {query} 股價資訊"
+        print(f"Stock data error for '{query}': {e}")
+        return f"❌ 股價查詢發生錯誤"
 
 def get_oil_price():
     try:
-        url = "https://api.eia.gov/v2/petroleum/pri/gnd/data/"
-        params = {
-            'frequency': 'weekly',
-            'data[0]': 'value',
-            'facets[product][]': 'EPD2DXL0',
-            'sort[0][column]': 'period',
-            'sort[0][direction]': 'desc',
-            'offset': 0,
-            'length': 1,
-            'api_key': 'YOUR_EIA_API_KEY'  # 需要申請 EIA API Key
-        }
-        
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('response', {}).get('data'):
-                price = data['response']['data'][0]['value']
-                return f"⛽ 美國汽油價格: ${price:.2f}/加侖"
-        
-        # 備用方案：使用固定回覆
-        return "⛽ 油價查詢服務暫時無法使用"
+        # 使用替代的油價 API 或固定回覆
+        return "⛽ 油價查詢功能維護中\n請至相關財經網站查詢最新油價"
         
     except Exception as e:
         print(f"Oil price error: {e}")
@@ -117,8 +143,8 @@ def get_oil_price():
 
 def get_weather(city="台北市"):
     try:
-        if not WEATHER_API_KEY:
-            return "❌ 天氣服務未設定"
+        if not WEATHER_API_KEY or WEATHER_API_KEY == 'dummy':
+            return f"❌ {city}天氣服務需要設定 API Key\n請聯繫管理員設定 OpenWeatherMap API"
             
         # OpenWeatherMap API
         url = f"http://api.openweathermap.org/data/2.5/weather"
@@ -139,17 +165,24 @@ def get_weather(city="台北市"):
             description = data['weather'][0]['description']
             
             return f"🌤️ {city}天氣\n🌡️ 溫度: {temp}°C (體感 {feels_like}°C)\n💧 濕度: {humidity}%\n☁️ {description}"
+        elif response.status_code == 401:
+            return f"❌ 天氣 API Key 無效"
         else:
             print(f"Weather API error: {response.status_code}, {response.text}")
             return f"❌ {city}天氣查詢失敗"
             
     except Exception as e:
         print(f"Weather error: {e}")
-        return f"❌ {city}天氣取得失敗: {str(e)}"
+        return f"❌ {city}天氣取得失敗"
 
 def get_daily_stock_summary():
     """取得每日股市摘要"""
     try:
+        # 檢查是否為週末
+        now = datetime.now(pytz.timezone('US/Eastern'))
+        if now.weekday() >= 5:
+            return "📈 股市摘要\n🕒 週末市場休市\n下週一恢復交易"
+        
         # 主要指數
         indices = {
             "道瓊": "^DJI",
@@ -159,21 +192,30 @@ def get_daily_stock_summary():
         }
         
         summary = "📈 今日股市摘要\n\n"
+        success_count = 0
         
         for name, symbol in indices.items():
             try:
                 ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="1d")
+                hist = ticker.history(period="2d")
                 if not hist.empty:
                     current = hist['Close'].iloc[-1]
-                    prev = ticker.info.get('previousClose', current)
-                    change = current - prev
-                    change_pct = (change / prev) * 100 if prev != 0 else 0
-                    
-                    emoji = "📈" if change > 0 else "📉" if change < 0 else "➡️"
-                    summary += f"{emoji} {name}: {current:.2f} ({change_pct:+.1f}%)\n"
-            except:
+                    if len(hist) > 1:
+                        prev = hist['Close'].iloc[-2]
+                        change = current - prev
+                        change_pct = (change / prev) * 100
+                        emoji = "📈" if change > 0 else "📉" if change < 0 else "➡️"
+                        summary += f"{emoji} {name}: {current:.2f} ({change_pct:+.1f}%)\n"
+                        success_count += 1
+                    else:
+                        summary += f"📊 {name}: {current:.2f}\n"
+                        success_count += 1
+            except Exception as e:
+                print(f"Index {name} error: {e}")
                 summary += f"❌ {name}: 資料無法取得\n"
+        
+        if success_count == 0:
+            return "📈 股市摘要\n❌ 目前無法取得股市資料\n請稍後再試"
         
         return summary
         
@@ -220,14 +262,11 @@ def handle_message(event):
         
         reply = "感謝您的訊息！\n很抱歉，本機器人無法辨別回覆用戶的訊息。\n敬請期待我們下次發送的內容喔😊"
         
-        if lower_name in ["hi", "妳好", "哈囉", "嗨", "安安"]:
-            reply = "🤖 妳好！有什麼需要幫忙的嗎？\n\n📊 股票查詢：輸入公司名稱或代碼\n🌤️ 天氣查詢：輸入「天氣」\n⛽ 油價查詢：輸入「油價」\n📈 股市摘要：輸入「股市」"
+        if lower_name in ["hi", "妳好", "哈囉", "嗨", "安安", "你好"]:
+            reply = "🤖 妳好！有什麼需要幫忙的嗎？\n\n📊 美股查詢：\n• 輝達、美超微、google\n\n📊 台股查詢：\n• 台積電、聯電、鴻準\n• 00918、00878\n• 元大美債20年、群益25年美債\n• 仁寶、陽明、華航、長榮航\n\n🌤️ 天氣查詢：輸入「天氣」\n⛽ 油價查詢：輸入「油價」\n📈 股市摘要：輸入「股市」"
             
         elif "天氣" in user_message:
-            if "台北" in user_message:
-                reply = get_weather("台北市")
-            else:
-                reply = get_weather("台北市")
+            reply = get_weather("台北市")
                 
         elif "油價" in user_message:
             reply = get_oil_price()
