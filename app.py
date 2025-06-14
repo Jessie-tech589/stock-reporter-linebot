@@ -609,3 +609,69 @@ def handle_message(event):
         )
 
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+
+# ====== 手動測試用 send_scheduled_test ======
+@app.route("/send_scheduled_test", methods=['GET'])
+def send_scheduled_test():
+    try:
+        test_time = request.args.get('time', '')
+        if not test_time:
+            return '❌ 請加參數 ?time=HH:MM，例如 ?time=07:10'
+
+        taiwan_time = datetime.now(TAIWAN_TZ)
+        current_weekday = taiwan_time.weekday()
+        print(f"[手動測試] 模擬時間: {test_time} (週{current_weekday})")
+
+        triggered = False
+        for schedule in SCHEDULED_MESSAGES:
+            if schedule['time'] == test_time:
+                should_send = False
+                if schedule['days'] == 'daily':
+                    should_send = True
+                elif schedule['days'] == 'weekdays' and current_weekday < 5:
+                    should_send = True
+                elif schedule['days'] == '135' and current_weekday in [0, 2, 4]:
+                    should_send = True
+                elif schedule['days'] == '24' and current_weekday in [1, 3]:
+                    should_send = True
+                elif schedule['days'] == '23456' and current_weekday in [1, 2, 3, 4, 5]:
+                    should_send = True
+
+                if should_send:
+                    triggered = True
+                    message_type = schedule['message']
+                    message_functions = {
+                        "morning_briefing": get_morning_briefing,
+                        "commute_to_work": get_commute_to_work,
+                        "market_open": get_market_open,
+                        "market_mid": get_market_mid,
+                        "market_close": get_market_close,
+                        "evening_zhongzheng": get_evening_zhongzheng,
+                        "evening_xindian": get_evening_xindian,
+                        "us_market_report": get_us_market_report
+                    }
+                    print(f"[手動測試] 觸發排程: {schedule['time']} - {message_type}")
+                    try:
+                        message_func = message_functions.get(message_type)
+                        if message_func:
+                            message = message_func()
+                            if not message or message.strip() == "":
+                                message = "⚠️ 查無資料，請確認關鍵字或稍後再試。"
+                            try:
+                                line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=message))
+                                print(f"[手動測試] 發送成功 ➜ {message_type}")
+                                return f'✅ 手動測試發送成功 ➜ {message_type}'
+                            except Exception as e:
+                                print(f"[手動測試] 發送失敗 ➜ {message_type}: {str(e)}")
+                                return f'❌ 手動測試發送失敗 ➜ {message_type}: {str(e)}'
+                    except Exception as e:
+                        print(f"[手動測試] 處理 {message_type} 發生錯誤: {str(e)}")
+                        return f'❌ 手動測試處理錯誤: {str(e)}'
+
+        if not triggered:
+            return f'⛔ 手動測試此時間 {test_time} 無排程觸發'
+
+    except Exception as e:
+        print(f"[手動測試] 整體錯誤: {str(e)}")
+        return f"❌ 手動測試錯誤: {str(e)}"
+
