@@ -3,14 +3,16 @@ import requests
 import time
 import json
 import pytz
+import yfinance as yf
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError, LineBotApiError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from fugle_marketdata import RestClient
+from fugle_marketdata import MarketData
 
 app = Flask(__name__)
 
@@ -21,10 +23,11 @@ LINE_USER_ID = os.environ.get('LINE_USER_ID')
 WEATHER_API_KEY = os.environ.get('WEATHER_API_KEY')
 GOOGLE_MAPS_API_KEY = os.environ.get('GOOGLE_MAPS_API_KEY')
 NEWS_API_KEY = os.environ.get('NEWS_API_KEY')
-
+FUGLE_API_TOKEN = os.environ.get('FUGLE_API_TOKEN')
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 TAIWAN_TZ = pytz.timezone('Asia/Taipei')
+
 # ====== 固定地址 ======
 ADDRESSES = {
     "home": "新北市新店區建國路99巷",
@@ -50,7 +53,6 @@ CUSTOM_ROUTES = {
         "waypoints": ["林森北路", "林森南路", "信義路二段10巷", "愛國東路21巷"]
     }
 }
-
 # ====== 股票名稱對照表 ======
 stock_name_map = {
     "台積電": "2330", "聯電": "2303", "陽明": "2609", "華航": "2610",
@@ -59,6 +61,7 @@ stock_name_map = {
 us_stock_name_map = {
     "輝達": "NVDA", "美超微": "SMCI", "google": "GOOGL", "蘋果": "AAPL", "特斯拉": "TSLA", "微軟": "MSFT"
 }
+
 # ====== 自訂機車路線查詢 ======
 def get_custom_traffic(route_name):
     if route_name not in CUSTOM_ROUTES:
@@ -102,9 +105,8 @@ def get_custom_traffic(route_name):
                 f"資料來源: Google Maps")
     except Exception as e:
         return f"❌ 車流查詢失敗：{e}"
-
 # ====== 天氣查詢 ======
-def get_weather(location):
+def get_weather(location="臺北市"):
     api_key = WEATHER_API_KEY
     url = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089"
     params = {
@@ -136,8 +138,11 @@ def get_weather(location):
             f"資料來源: 中央氣象署"
         )
     except Exception as e:
-        return f"❌ {location}天氣\n\n取得資料失敗"
+        return f"❌ {location}天氣\n\n取得資料失敗: {e}"
+
 # ====== 新聞查詢 ======
+import xml.etree.ElementTree as ET
+
 def get_news():
     try:
         res = requests.get("https://udn.com/rssfeed/news/2/6638?ch=news", timeout=10)
@@ -151,9 +156,10 @@ def get_news():
         return reply
     except Exception as e:
         return f"❌ 新聞取得失敗: {e}"
-
 # ====== 行事曆查詢 ======
-def get_calendar_events():
+from google.oauth2.credentials import Credentials
+
+def get_calendar():
     try:
         SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
         creds = None
@@ -176,10 +182,21 @@ def get_calendar_events():
         return f"❌ 行事曆取得失敗: {e}"
 
 # ====== 台股查詢 ======
+FUGLE_API_TOKEN = os.environ.get('FUGLE_API_TOKEN')
+
+def get_stock_info(symbol):
+    try:
+        if symbol.upper() in stock_name_map.values():
+            return get_stock_price_tw(symbol)
+        else:
+            return get_stock_price_us(symbol)
+    except Exception as e:
+        return f"❌ 股票查詢錯誤: {e}"
+
 def get_stock_price_tw(symbol):
     try:
-        api = MarketData(token=FUGLE_API_TOKEN)
-        data = api.intraday.quote(symbol=symbol)
+        client = RestClient(api_token=FUGLE_API_TOKEN)
+        data = client.intraday.quote(symbol=symbol)
         info = data["data"]["quote"]
         name = info["nameZh"]
         price = info["price"]["last"]
@@ -194,6 +211,8 @@ def get_stock_price_tw(symbol):
         return f"❌ 台股查詢失敗: {e}"
 
 # ====== 美股查詢 ======
+import yfinance as yf
+
 def get_stock_price_us(symbol):
     try:
         ticker = yf.Ticker(symbol)
@@ -211,6 +230,7 @@ def get_stock_price_us(symbol):
                 f"漲跌幅: {percent:+.2f}%")
     except Exception as e:
         return f"❌ 美股查詢失敗: {e}"
+
 # ====== 匯率查詢 ======
 def get_exchange_rates():
     try:
@@ -250,18 +270,17 @@ def get_gasoline_price():
         return reply
     except Exception as e:
         return f"❌ 油價查詢失敗: {e}"
-
-# ====== 用戶自訂美股名稱對應表 ======
-us_stock_name_map = {
-    "輝達": "NVDA",
-    "蘋果": "AAPL",
-    "谷歌": "GOOGL",
-    "微軟": "MSFT",
-    "特斯拉": "TSLA",
-    "超微": "AMD",
-    "超微電腦": "SMCI"
-}
 # ====== 處理 LINE Bot 訊息回應 ======
+@app.route("/callback", methods=['POST'])
+def callback():
+    signature = request.headers['X-Line-Signature']
+    body = request.get_data(as_text=True)
+    try:
+        handler.handle(body, signature)
+    except InvalidSignatureError:
+        abort(400)
+    return 'OK'
+
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     try:
@@ -271,7 +290,7 @@ def handle_message(event):
         if lower_name in ["hi", "你好", "哈囉", "安安"]:
             reply = "👋 哈囉，有什麼需要查詢的嗎？\n\n📊 股票\n🌏 匯率\n⛽ 油價\n☁️ 天氣\n📆 行事曆\n🗞️ 新聞"
         elif "天氣" in name:
-            reply = get_weather()
+            reply = get_weather("台北市")
         elif "行事曆" in name:
             reply = get_calendar()
         elif "新聞" in name:
@@ -280,10 +299,8 @@ def handle_message(event):
             reply = get_exchange_rates()
         elif "油價" in name:
             reply = get_gasoline_price()
-        elif "美股" in name:
-            reply = get_us_market_open()
         else:
-            symbol = us_stock_name_map.get(name, name.upper())
+            symbol = us_stock_name_map.get(name, stock_name_map.get(name, name.upper()))
             reply = get_stock_info(symbol)
 
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
@@ -291,20 +308,42 @@ def handle_message(event):
     except Exception as e:
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"❌ 查詢錯誤: {e}"))
 
+# ====== 定時推播主功能 (每日定時發送訊息) ======
+def send_scheduled():
+    now = datetime.now(TAIWAN_TZ)
+    weekday = now.weekday()  # 0=Monday, 6=Sunday
+    hour = now.hour
+    minute = now.minute
+
+    print(f"[定時推播] 現在時間: {now.strftime('%H:%M')} (週{weekday+1})")
+
+    message = ""
+    if weekday in [0, 1, 2, 3, 4] and hour == 8 and minute < 10:
+        message += get_weather("台北市") + "\n\n"
+        message += get_exchange_rates() + "\n\n"
+        message += get_gasoline_price()
+    elif weekday in [0, 1, 2, 3, 4] and hour == 15 and minute < 10:
+        message += get_news()
+
+    if message:
+        try:
+            line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=message.strip()))
+            print("[定時推播] 已推播訊息")
+        except LineBotApiError as e:
+            print(f"[定時推播] 推播錯誤: {e}")
+    else:
+        print("[定時推播] 此刻無排程觸發")
+
 # ====== 測試 API (手動觸發定時推播) ======
 @app.route("/send_scheduled_test", methods=["GET"])
 def send_scheduled_test():
-    return send_scheduled()
+    send_scheduled()
+    return "OK"
 
 # ====== 啟動應用程式 ======
 if __name__ == "__main__":
     from apscheduler.schedulers.background import BackgroundScheduler
-    import pytz
-
-    scheduler = BackgroundScheduler(timezone=pytz.timezone("Asia/Taipei"))
-
-    # 定時排程推播 (每十分鐘一次以防止 render 休眠)
+    scheduler = BackgroundScheduler(timezone=TAIWAN_TZ)
     scheduler.add_job(send_scheduled, "cron", minute="0,10,20,30,40,50")
-
     scheduler.start()
     app.run(host="0.0.0.0", port=10000)
