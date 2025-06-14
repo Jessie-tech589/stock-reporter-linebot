@@ -6,7 +6,7 @@ import pytz
 from datetime import datetime
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
-from linebot.exceptions import InvalidSignatureError
+from linebot.exceptions import InvalidSignatureError, LineBotApiError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -102,6 +102,7 @@ def get_custom_traffic(route_name):
                 f"資料來源: Google Maps")
     except Exception as e:
         return f"❌ 車流查詢失敗：{e}"
+
 # ====== 天氣查詢 ======
 def get_weather(location):
     api_key = WEATHER_API_KEY
@@ -120,10 +121,7 @@ def get_weather(location):
             return f"❌ {location}天氣\n\n查無此地區資料"
         weather = locations[0]
         name = weather.get('locationName', location)
-        weather_elements = {
-            e['elementName']: e['time'][0]['elementValue'][0]['value']
-            for e in weather['weatherElement']
-        }
+        weather_elements = {e['elementName']: e['time'][0]['elementValue'][0]['value'] for e in weather['weatherElement']}
         min_temp = weather_elements.get('MinT', '')
         max_temp = weather_elements.get('MaxT', '')
         pop = weather_elements.get('PoP12h', '')
@@ -139,355 +137,174 @@ def get_weather(location):
         )
     except Exception as e:
         return f"❌ {location}天氣\n\n取得資料失敗"
-# ====== NewsAPI 新聞查詢 ======
-def get_news(keyword=""):
-    api_key = NEWS_API_KEY
-    url = "https://newsapi.org/v2/top-headlines"
-    params = {
-        "apiKey": api_key,
-        "q": keyword or "台灣",
-        "language": "zh",
-        "pageSize": 5
-    }
+# ====== 新聞查詢 ======
+def get_news():
     try:
-        res = requests.get(url, params=params, timeout=5)
-        data = res.json()
-        if data.get("status") != "ok" or not data.get("articles"):
-            return "找不到相關新聞。"
-        reply = "📰 最新新聞：\n"
-        for article in data["articles"]:
-            reply += f"• {article['title']}\n"
-            if article.get("url"):
-                reply += f"{article['url']}\n"
+        res = requests.get("https://udn.com/rssfeed/news/2/6638?ch=news", timeout=10)
+        root = ET.fromstring(res.content)
+        items = root.findall(".//item")
+        reply = "📰 即時財經新聞\n\n"
+        for item in items[:5]:
+            title = item.find("title").text
+            link = item.find("link").text
+            reply += f"🔹 {title}\n{link}\n\n"
         return reply
     except Exception as e:
-        return f"❌ 新聞查詢失敗：{e}"
+        return f"❌ 新聞取得失敗: {e}"
 
-
-# ====== Google Calendar 查詢 ======
-def get_google_calendar_events():
-    SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+# ====== 行事曆查詢 ======
+def get_calendar_events():
     try:
-        creds_json = os.environ.get('GOOGLE_CREDS_JSON')
-        if not creds_json:
-            return "📅 今日行程\n\nGoogle Calendar API金鑰未設定"
-        creds_dict = json.loads(creds_json)
-        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+        creds = None
+        if os.path.exists('token.json'):
+            creds = Credentials.from_authorized_user_file('token.json', SCOPES)
         service = build('calendar', 'v3', credentials=creds)
-        taiwan_tz = pytz.timezone('Asia/Taipei')
-        now = datetime.now(taiwan_tz)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
-        events_result = service.events().list(
-            calendarId='wjessie@gmail.com',
-            timeMin=today_start.isoformat(),
-            timeMax=today_end.isoformat(),
-            maxResults=10,
-            singleEvents=True,
-            orderBy='startTime'
-        ).execute()
+        now = datetime.utcnow().isoformat() + 'Z'
+        events_result = service.events().list(calendarId='primary', timeMin=now,
+                                              maxResults=5, singleEvents=True,
+                                              orderBy='startTime').execute()
         events = events_result.get('items', [])
         if not events:
-            return '📅 今日行程\n\n今日無安排行程'
-        result = '📅 今日行程\n\n'
-        for event in events[:5]:
+            return "📅 行事曆\n\n今天沒有預定行程"
+        reply = "📅 行事曆\n\n"
+        for event in events:
             start = event['start'].get('dateTime', event['start'].get('date'))
-            summary = event.get('summary', '無標題')
-            if 'T' in start:
-                time_part = start.split('T')[1][:5]
-                result += f"• {time_part} {summary}\n"
-            else:
-                result += f"• 全天 {summary}\n"
-        return result
+            reply += f"🔹 {start[:16]} - {event['summary']}\n"
+        return reply
     except Exception as e:
-        return f"📅 今日行程\n\n行事曆資料取得失敗: {str(e)}"
-# ====== 台股查詢 ======
-def get_taiwan_stock_info(code):
-    api_key = os.environ.get('FUGLE_API_KEY', '')
-    if not api_key:
-        return "❌ 富果API金鑰未設定"
-    try:
-        client = RestClient(api_key=api_key)
-        symbol_id = "IX0001" if code == "TAIEX" else code
-        quote = client.stock.intraday.quote(symbol_id=symbol_id)
-        if not quote or 'data' not in quote or not quote['data']:
-            return f"📈 {code}\n\n查無即時行情資料"
-        info = quote['data']
-        name = info.get('name', code)
-        price = info.get('last', 'N/A')
-        change = info.get('change', 'N/A')
-        change_percent = info.get('changePercent', 'N/A')
-        volume = info.get('volume', 'N/A')
-        time_str = info.get('at', 'N/A')
-        if isinstance(change, (int, float)) and change > 0:
-            change_symbol = "📈"
-        elif isinstance(change, (int, float)) and change < 0:
-            change_symbol = "📉"
-        else:
-            change_symbol = "📊"
-        return (
-            f"{change_symbol} {name}（{code}）\n"
-            f"時間：{time_str}\n"
-            f"成交價：{price}\n"
-            f"漲跌：{change} ({change_percent}%)\n"
-            f"成交量：{volume}"
-        )
-    except Exception as e:
-        print(f"台股API錯誤: {str(e)}")
-        return f"📈 {code}\n\n取得行情失敗"
+        return f"❌ 行事曆取得失敗: {e}"
 
+# ====== 台股查詢 ======
+def get_stock_price_tw(symbol):
+    try:
+        api = MarketData(token=FUGLE_API_TOKEN)
+        data = api.intraday.quote(symbol=symbol)
+        info = data["data"]["quote"]
+        name = info["nameZh"]
+        price = info["price"]["last"]
+        change = info["change"]
+        percent = info["changePercent"]
+        sign = "📈" if change > 0 else "📉" if change < 0 else "📊"
+        return (f"{sign} {name} ({symbol})\n"
+                f"價格: {price:.2f}\n"
+                f"漲跌: {change:+.2f}\n"
+                f"漲跌幅: {percent:+.2f}%")
+    except Exception as e:
+        return f"❌ 台股查詢失敗: {e}"
 
 # ====== 美股查詢 ======
-def get_us_stock_info(symbol):
+def get_stock_price_us(symbol):
     try:
-        import yfinance as yf
         ticker = yf.Ticker(symbol)
         hist = ticker.history(period="1d")
         if hist.empty:
-            return f"📈 美股 {symbol}\n\n無法取得即時行情"
-        current_price = hist['Close'].iloc[-1]
-        prev_close = hist['Open'].iloc[-1]
-        change = current_price - prev_close
-        change_percent = (change / prev_close) * 100 if prev_close != 0 else 0
-        if change > 0:
-            change_symbol = "📈"
-        elif change < 0:
-            change_symbol = "📉"
-        else:
-            change_symbol = "📊"
-        return (f"{change_symbol} 美股 {symbol}\n\n"
-                f"價格: ${current_price:.2f}\n"
+            return f"❌ 無法取得 {symbol} 資料"
+        current = hist['Close'].iloc[-1]
+        open_price = hist['Open'].iloc[-1]
+        change = current - open_price
+        percent = (change / open_price) * 100 if open_price else 0
+        sign = "📈" if change > 0 else "📉" if change < 0 else "📊"
+        return (f"{sign} {symbol}\n"
+                f"價格: ${current:.2f}\n"
                 f"漲跌: {change:+.2f}\n"
-                f"漲跌幅: {change_percent:+.2f}%")
-    except ImportError:
-        return f"📈 美股 {symbol}\n\nyfinance 套件未安裝"
+                f"漲跌幅: {percent:+.2f}%")
     except Exception as e:
-        return f"📈 美股 {symbol}\n\n取得資料失敗: {str(e)}"
-# ====== 匯率查詢（ExchangeRate-API 免費版） ======
-def get_exchange_rate():
+        return f"❌ 美股查詢失敗: {e}"
+# ====== 匯率查詢 ======
+def get_exchange_rates():
     try:
         url = "https://open.er-api.com/v6/latest/USD"
-        res = requests.get(url, timeout=10)
-        data = res.json()
-        if data.get("result") != "success":
-            return "❌ 匯率查詢失敗"
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        if data["result"] != "success":
+            return "❌ 匯率資料讀取失敗"
         rates = data["rates"]
-        # 主要關注的幾個
-        usd_twd = rates.get("TWD", 0)
-        usd_jpy = rates.get("JPY", 0)
-        usd_cny = rates.get("CNY", 0)
-        usd_hkd = rates.get("HKD", 0)
-        usd_gbp = rates.get("GBP", 0)
-        reply = (
-            f"💱 匯率\n\n"
-            f"1美元 ➜ {usd_twd:.2f} 台幣\n"
-            f"1美元 ➜ {usd_jpy:.2f} 日圓\n"
-            f"1美元 ➜ {usd_cny:.2f} 人民幣\n"
-            f"1美元 ➜ {usd_hkd:.2f} 港幣\n"
-            f"1美元 ➜ {usd_gbp:.2f} 英磅"
-        )
+        reply = "💱 匯率資訊 (以 1 單位外幣兌台幣)\n\n"
+        currency_map = {
+            "USD": "美元",
+            "JPY": "日圓",
+            "CNY": "人民幣",
+            "HKD": "港幣",
+            "GBP": "英鎊"
+        }
+        for code, name in currency_map.items():
+            rate = rates.get("TWD") / rates.get(code)
+            reply += f"🔸 {name} ({code}): {rate:.2f} TWD\n"
         return reply
     except Exception as e:
-        return f"❌ 匯率查詢失敗: {str(e)}"
+        return f"❌ 匯率查詢失敗: {e}"
 
-
-# ====== 油價查詢（使用中油官網API或抓取公開資料） ======
-def get_fuel_price():
+# ====== 油價查詢 ======
+def get_gasoline_price():
     try:
-        url = "https://vipmbr.cpc.com.tw/OpenData.aspx?SN=8A2E8C1D1DF9494C"  # 中油公開油價 XML/CSV API
-        res = requests.get(url, timeout=10)
-        res.encoding = 'utf-8'
-        text = res.text
-        # 很簡單的抓法（直接字串找關鍵字）
-        def extract_price(keyword):
-            start = text.find(keyword)
-            if start == -1:
-                return "N/A"
-            start = text.find(">", start) + 1
-            end = text.find("<", start)
-            return text[start:end].strip()
-        gas92 = extract_price("Unleaded Gasoline 92")
-        gas95 = extract_price("Unleaded Gasoline 95")
-        gas98 = extract_price("Unleaded Gasoline 98")
-        diesel = extract_price("Premium Diesel")
-        return (f"⛽ 油價資訊（今日）\n\n"
-                f"92無鉛汽油: {gas92} 元/公升\n"
-                f"95無鉛汽油: {gas95} 元/公升\n"
-                f"98無鉛汽油: {gas98} 元/公升\n"
-                f"超級柴油: {diesel} 元/公升\n\n"
-                f"資料來源: 台灣中油")
+        url = "https://ethanlin.me/api/oil_tw"
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        prices = data["data"]
+        reply = "⛽ 油價資訊 (台灣中油)\n\n"
+        reply += f"92無鉛: {prices['gasoline_92']} 元/公升\n"
+        reply += f"95無鉛: {prices['gasoline_95']} 元/公升\n"
+        reply += f"98無鉛: {prices['gasoline_98']} 元/公升\n"
+        reply += f"柴油: {prices['diesel']} 元/公升\n"
+        return reply
     except Exception as e:
-        return f"❌ 油價查詢失敗: {str(e)}"
-# ====== 定時推播排程 ======
-SCHEDULED_MESSAGES = [
-    {"time": "07:10", "message": "morning_briefing", "days": "daily"},
-    {"time": "08:00", "message": "commute_to_work", "days": "weekdays"},
-    {"time": "09:30", "message": "market_open", "days": "weekdays"},
-    {"time": "12:00", "message": "market_mid", "days": "weekdays"},
-    {"time": "13:45", "message": "market_close", "days": "weekdays"},
-    {"time": "17:30", "message": "evening_zhongzheng", "days": "135"},
-    {"time": "17:30", "message": "evening_xindian", "days": "24"},
-    {"time": "07:30", "message": "us_market_report", "days": "23456"}  # 調整後的美股早報排程
-]
+        return f"❌ 油價查詢失敗: {e}"
 
-# ====== 各類組合訊息函式 ======
-def get_morning_briefing():
-    weather = get_weather("新北市新店區")
-    news = get_news()
-    calendar = get_google_calendar_events()
-    exchange = get_exchange_rate()
-    return f"🌞 早安！\n\n{weather}\n\n{news}\n\n{calendar}\n\n{exchange}"
-
-def get_commute_to_work():
-    traffic = get_custom_traffic("家到公司")
-    weather = get_weather("台北市中山區")
-    return f"🚗 上班通勤\n\n{weather}\n\n{traffic}"
-
-def get_market_open():
-    return "📈 台股開盤通知（可自訂內容）"
-
-def get_market_mid():
-    return "📊 台股盤中快訊（可自訂內容）"
-
-def get_market_close():
-    return "📉 台股收盤資訊（可自訂內容）"
-
-def get_evening_zhongzheng():
-    traffic = get_custom_traffic("公司到郵局")
-    weather = get_weather("台北市中正區")
-    fuel_price = get_fuel_price()
-    return f"🌆 下班（郵局）\n\n{weather}\n\n{traffic}\n\n{fuel_price}"
-
-def get_evening_xindian():
-    traffic = get_custom_traffic("公司到家")
-    weather = get_weather("新北市新店區")
-    fuel_price = get_fuel_price()
-    return f"🌆 下班（返家）\n\n{weather}\n\n{traffic}\n\n{fuel_price}"
-
-def get_us_market_report():
-    symbols = ["NVDA", "TSLA", "AAPL", "GOOGL", "MSFT", "SMCI"]
-    messages = []
-    for symbol in symbols:
-        msg = get_us_stock_info(symbol)
-        messages.append(msg)
-    return "🌎 美股行情報告\n\n" + "\n\n".join(messages)
-# ====== 強化版 send_scheduled（自動定時推播用） ======
-@app.route("/send_scheduled", methods=['GET', 'POST'])
-def send_scheduled():
+# ====== 用戶自訂美股名稱對應表 ======
+us_stock_name_map = {
+    "輝達": "NVDA",
+    "蘋果": "AAPL",
+    "谷歌": "GOOGL",
+    "微軟": "MSFT",
+    "特斯拉": "TSLA",
+    "超微": "AMD",
+    "超微電腦": "SMCI"
+}
+# ====== 處理 LINE Bot 訊息回應 ======
+@handler.add(MessageEvent, message=TextMessage)
+def handle_message(event):
     try:
-        taiwan_time = datetime.now(TAIWAN_TZ)
-        current_time = taiwan_time.strftime('%H:%M')
-        current_weekday = taiwan_time.weekday()  # 0 = Monday, 6 = Sunday
-        print(f"[定時推播] 現在時間: {current_time} (週{current_weekday})")
-        any_triggered = False
+        name = event.message.text.strip()
+        lower_name = name.lower()
 
-        for schedule in SCHEDULED_MESSAGES:
-            if schedule['time'] == current_time:
-                should_send = False
-                if schedule['days'] == 'daily':
-                    should_send = True
-                elif schedule['days'] == 'weekdays' and current_weekday < 5:
-                    should_send = True
-                elif schedule['days'] == '135' and current_weekday in [0, 2, 4]:
-                    should_send = True
-                elif schedule['days'] == '24' and current_weekday in [1, 3]:
-                    should_send = True
-                elif schedule['days'] == '23456' and current_weekday in [1, 2, 3, 4, 5]:
-                    should_send = True
+        if lower_name in ["hi", "你好", "哈囉", "安安"]:
+            reply = "👋 哈囉，有什麼需要查詢的嗎？\n\n📊 股票\n🌏 匯率\n⛽ 油價\n☁️ 天氣\n📆 行事曆\n🗞️ 新聞"
+        elif "天氣" in name:
+            reply = get_weather()
+        elif "行事曆" in name:
+            reply = get_calendar()
+        elif "新聞" in name:
+            reply = get_news()
+        elif "匯率" in name:
+            reply = get_exchange_rates()
+        elif "油價" in name:
+            reply = get_gasoline_price()
+        elif "美股" in name:
+            reply = get_us_market_open()
+        else:
+            symbol = us_stock_name_map.get(name, name.upper())
+            reply = get_stock_info(symbol)
 
-                if should_send:
-                    any_triggered = True
-                    message_type = schedule['message']
-                    message_functions = {
-                        "morning_briefing": get_morning_briefing,
-                        "commute_to_work": get_commute_to_work,
-                        "market_open": get_market_open,
-                        "market_mid": get_market_mid,
-                        "market_close": get_market_close,
-                        "evening_zhongzheng": get_evening_zhongzheng,
-                        "evening_xindian": get_evening_xindian,
-                        "us_market_report": get_us_market_report
-                    }
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
-                    print(f"[定時推播] 觸發排程: {schedule['time']} - {message_type}")
-                    try:
-                        message_func = message_functions.get(message_type)
-                        if message_func:
-                            message = message_func()
-                            if not message.strip():
-                                message = "⚠️ 查無資料，請確認關鍵字或稍後再試。"
-                            line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=message))
-                            print(f"[定時推播] 發送成功 ➜ {message_type}")
-                        else:
-                            print(f"[定時推播] 未知的 message_type: {message_type}")
-                    except Exception as e:
-                        print(f"[定時推播] 發送錯誤: {str(e)}")
-
-        if not any_triggered:
-            print(f"[定時推播] 此刻無排程觸發")
-        return 'OK'
     except Exception as e:
-        print(f"[定時推播] 整體錯誤: {str(e)}")
-        return f"❌ 錯誤: {str(e)}"
-# ====== 手動測試用 send_scheduled_test ======
-@app.route("/send_scheduled_test", methods=['GET'])
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"❌ 查詢錯誤: {e}"))
+
+# ====== 測試 API (手動觸發定時推播) ======
+@app.route("/send_scheduled_test", methods=["GET"])
 def send_scheduled_test():
-    try:
-        test_time = request.args.get('time', '')
-        if not test_time:
-            return '❌ 請加參數 ?time=HH:MM，例如 ?time=07:10'
+    return send_scheduled()
 
-        taiwan_time = datetime.now(TAIWAN_TZ)
-        current_weekday = taiwan_time.weekday()
-        print(f"[手動測試] 模擬時間: {test_time} (週{current_weekday})")
+# ====== 啟動應用程式 ======
+if __name__ == "__main__":
+    from apscheduler.schedulers.background import BackgroundScheduler
+    import pytz
 
-        triggered = False
-        for schedule in SCHEDULED_MESSAGES:
-            if schedule['time'] == test_time:
-                should_send = False
-                if schedule['days'] == 'daily':
-                    should_send = True
-                elif schedule['days'] == 'weekdays' and current_weekday < 5:
-                    should_send = True
-                elif schedule['days'] == '135' and current_weekday in [0, 2, 4]:
-                    should_send = True
-                elif schedule['days'] == '24' and current_weekday in [1, 3]:
-                    should_send = True
-                elif schedule['days'] == '23456' and current_weekday in [1, 2, 3, 4, 5]:
-                    should_send = True
+    scheduler = BackgroundScheduler(timezone=pytz.timezone("Asia/Taipei"))
 
-                if should_send:
-                    triggered = True
-                    message_type = schedule['message']
-                    message_functions = {
-                        "morning_briefing": get_morning_briefing,
-                        "commute_to_work": get_commute_to_work,
-                        "market_open": get_market_open,
-                        "market_mid": get_market_mid,
-                        "market_close": get_market_close,
-                        "evening_zhongzheng": get_evening_zhongzheng,
-                        "evening_xindian": get_evening_xindian,
-                        "us_market_report": get_us_market_report
-                    }
+    # 定時排程推播 (每十分鐘一次以防止 render 休眠)
+    scheduler.add_job(send_scheduled, "cron", minute="0,10,20,30,40,50")
 
-                    print(f"[手動測試] 觸發排程: {schedule['time']} - {message_type}")
-                    try:
-                        message_func = message_functions.get(message_type)
-                        if message_func:
-                            message = message_func()
-                            if not message.strip():
-                                message = "⚠️ 查無資料，請確認關鍵字或稍後再試。"
-                            line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=message))
-                            print(f"[手動測試] 發送成功 ➜ {message_type}")
-                            return f'✅ 手動測試發送成功 ➜ {message_type}'
-                        else:
-                            return f'❌ 未知的訊息類型: {message_type}'
-                    except Exception as e:
-                        print(f"[手動測試] 發送錯誤: {str(e)}")
-                        return f'❌ 發送錯誤: {str(e)}'
-
-        if not triggered:
-            return f'⛔ 此時間 {test_time} 無排程觸發'
-    except Exception as e:
-        print(f"[手動測試] 整體錯誤: {str(e)}")
-        return f"❌ 測試錯誤: {str(e)}"
+    scheduler.start()
+    app.run(host="0.0.0.0", port=10000)
