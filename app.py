@@ -12,7 +12,7 @@ from linebot.exceptions import InvalidSignatureError, LineBotApiError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from fugle_marketdata import MarketData
+from fugle_marketdata import RestClient
 
 app = Flask(__name__)
 
@@ -24,6 +24,11 @@ WEATHER_API_KEY = os.environ.get('WEATHER_API_KEY')
 GOOGLE_MAPS_API_KEY = os.environ.get('GOOGLE_MAPS_API_KEY')
 NEWS_API_KEY = os.environ.get('NEWS_API_KEY')
 FUGLE_API_TOKEN = os.environ.get('FUGLE_API_TOKEN')
+
+# 檢查必要環境變數
+if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_CHANNEL_SECRET:
+    print("警告: LINE_CHANNEL_ACCESS_TOKEN 或 LINE_CHANNEL_SECRET 未設定")
+
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 TAIWAN_TZ = pytz.timezone('Asia/Taipei')
@@ -53,6 +58,7 @@ CUSTOM_ROUTES = {
         "waypoints": ["林森北路", "林森南路", "信義路二段10巷", "愛國東路21巷"]
     }
 }
+
 # ====== 股票名稱對照表 ======
 stock_name_map = {
     "台積電": "2330", "聯電": "2303", "陽明": "2609", "華航": "2610",
@@ -105,6 +111,7 @@ def get_custom_traffic(route_name):
                 f"資料來源: Google Maps")
     except Exception as e:
         return f"❌ 車流查詢失敗：{e}"
+
 # ====== 天氣查詢 ======
 def get_weather(location="臺北市"):
     api_key = WEATHER_API_KEY
@@ -141,8 +148,6 @@ def get_weather(location="臺北市"):
         return f"❌ {location}天氣\n\n取得資料失敗: {e}"
 
 # ====== 新聞查詢 ======
-import xml.etree.ElementTree as ET
-
 def get_news():
     try:
         res = requests.get("https://udn.com/rssfeed/news/2/6638?ch=news", timeout=10)
@@ -156,9 +161,8 @@ def get_news():
         return reply
     except Exception as e:
         return f"❌ 新聞取得失敗: {e}"
-# ====== 行事曆查詢 ======
-from google.oauth2.credentials import Credentials
 
+# ====== 行事曆查詢 ======
 def get_calendar():
     try:
         SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
@@ -182,8 +186,6 @@ def get_calendar():
         return f"❌ 行事曆取得失敗: {e}"
 
 # ====== 台股查詢 ======
-FUGLE_API_TOKEN = os.environ.get('FUGLE_API_TOKEN')
-
 def get_stock_info(symbol):
     try:
         if symbol.upper() in stock_name_map.values():
@@ -211,8 +213,6 @@ def get_stock_price_tw(symbol):
         return f"❌ 台股查詢失敗: {e}"
 
 # ====== 美股查詢 ======
-import yfinance as yf
-
 def get_stock_price_us(symbol):
     try:
         ticker = yf.Ticker(symbol)
@@ -270,6 +270,7 @@ def get_gasoline_price():
         return reply
     except Exception as e:
         return f"❌ 油價查詢失敗: {e}"
+
 # ====== 處理 LINE Bot 訊息回應 ======
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -340,10 +341,17 @@ def send_scheduled_test():
     send_scheduled()
     return "OK"
 
+# ====== 健康檢查 ======
+@app.route("/health", methods=["GET"])
+def health():
+    return {"status": "OK"}
+
 # ====== 啟動應用程式 ======
 if __name__ == "__main__":
     from apscheduler.schedulers.background import BackgroundScheduler
     scheduler = BackgroundScheduler(timezone=TAIWAN_TZ)
     scheduler.add_job(send_scheduled, "cron", minute="0,10,20,30,40,50")
     scheduler.start()
-    app.run(host="0.0.0.0", port=10000)
+    
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host="0.0.0.0", port=port)
