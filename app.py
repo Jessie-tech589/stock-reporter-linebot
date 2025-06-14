@@ -17,8 +17,8 @@ from fugle_marketdata import RestClient
 app = Flask(__name__)
 
 # ====== 環境變數 ======
-LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
-LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
+LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', 'dummy')
+LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET', 'dummy')
 LINE_USER_ID = os.environ.get('LINE_USER_ID')
 WEATHER_API_KEY = os.environ.get('WEATHER_API_KEY')
 GOOGLE_MAPS_API_KEY = os.environ.get('GOOGLE_MAPS_API_KEY')
@@ -279,7 +279,7 @@ def handle_message(event):
         name = event.message.text.strip()
         lower_name = name.lower()
 
-        if lower_name in ["hi", "你好", "哈囉", "安安"]:
+        if lower_name in ["hi", "妳好", "哈囉", "安安"]:
             reply = "👋 哈囉，有什麼需要查詢的嗎？\n\n📊 股票\n🌏 匯率\n⛽ 油價\n☁️ 天氣\n📆 行事曆\n🗞️ 新聞"
         elif "天氣" in name:
             reply = get_weather("台北市")
@@ -334,8 +334,12 @@ def send_scheduled_test():
 
 # ====== 啟動應用程式 ======
 if __name__ == "__main__":
-    from apscheduler.schedulers.background import BackgroundScheduler
-    scheduler = BackgroundScheduler(timezone=TAIWAN_TZ)
-    scheduler.add_job(send_scheduled, "cron", minute="0,10,20,30,40,50")
-    scheduler.start()
-    app.run(host="0.0.0.0", port=10000)
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        scheduler = BackgroundScheduler(timezone=TAIWAN_TZ)
+        scheduler.add_job(send_scheduled, "cron", minute="0,10,20,30,40,50")
+        scheduler.start()
+        app.run(host="0.0.0.0", port=10000)
+    except Exception as e:
+        print(f"啟動失敗: {e}")
+        app.run(host="0.0.0.0", port=10000)
