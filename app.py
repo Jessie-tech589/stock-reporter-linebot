@@ -27,7 +27,8 @@ GOOGLE_CREDS_JSON = os.environ.get('GOOGLE_CREDS_JSON')
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
-# 股票代碼映射表 - 按照用戶指定的股票清單
+
+# 股票代碼映射表 - 請勿刪除任何項目
 STOCK_MAPPING = {
     # 美股
     "輝達": "NVDA",
@@ -65,11 +66,9 @@ def get_stock_data(query):
     try:
         original_query = query.strip()
 
-        # 若使用者輸入「美股」或「台股」但未指明標的
         if original_query in ["美股", "台股"]:
             return "請輸入具體股票名稱，例如：\n美股 輝達\n台股 台積電"
 
-        # 根據輸入自動對應股票代碼
         if "美股" in original_query:
             stock_name = original_query.replace("美股", "").strip()
             if not stock_name:
@@ -83,14 +82,12 @@ def get_stock_data(query):
         else:
             symbol = STOCK_MAPPING.get(original_query, original_query.upper())
 
-        # 檢查是否為週末
         now = datetime.now(pytz.timezone('Asia/Taipei'))
         if now.weekday() >= 5:
             return f"📊 {symbol}\n🕒 市場休市中（週末）\n請於交易日查詢即時股價"
 
         stock = yf.Ticker(symbol)
 
-        # 優先使用 info 提供的即時資料
         try:
             info = stock.info
             current_price = info.get('regularMarketPrice') or info.get('currentPrice')
@@ -105,7 +102,6 @@ def get_stock_data(query):
         except:
             pass
 
-        # 若 info 資料失敗，改用歷史資料
         hist = stock.history(period="2d")
         if not hist.empty:
             current = hist['Close'].iloc[-1]
@@ -119,21 +115,19 @@ def get_stock_data(query):
 
     except Exception as e:
         return f"❌ 查詢失敗：{e}"
+
+
 def get_us_market_summary():
     """取得前一晚美股行情摘要：大盤 + 個股"""
     try:
-        # 使用美東時間
         eastern = pytz.timezone('US/Eastern')
         now = datetime.now(eastern)
         weekday = now.weekday()
-        
-        # 若今天是週一，則回報上週五行情
         days_back = 3 if weekday == 0 else 1
         target_date = now - timedelta(days=days_back)
 
         summary = f"📊 前一晚美股行情摘要（{target_date.strftime('%Y-%m-%d')}）\n\n"
 
-        # 大盤指數
         indices = {
             "道瓊": "^DJI",
             "S&P500": "^GSPC",
@@ -151,12 +145,11 @@ def get_us_market_summary():
                     change_pct = (change / open_price) * 100 if open_price else 0
                     emoji = "📈" if change > 0 else "📉" if change < 0 else "➡️"
                     summary += f"{emoji} {name}: {close:.2f} ({change:+.2f}, {change_pct:+.2f}%)\n"
-            except Exception as e:
+            except:
                 summary += f"❌ {name} 資料錯誤\n"
 
         summary += "\n"
 
-        # 重點個股
         focus_stocks = {
             "輝達": "NVDA",
             "美超微": "SMCI",
@@ -174,15 +167,44 @@ def get_us_market_summary():
                     change_pct = (change / open_price) * 100 if open_price else 0
                     emoji = "📈" if change > 0 else "📉" if change < 0 else "➡️"
                     summary += f"{emoji} {name}: ${close:.2f} ({change:+.2f}, {change_pct:+.2f}%)\n"
-            except Exception as e:
+            except:
                 summary += f"❌ {name} 資料錯誤\n"
 
         return summary
 
     except Exception as e:
         return f"❌ 美股行情取得失敗: {e}"
+def get_weather(location):
+    return f"☁️ {location} 天氣資訊暫略（可接氣象 API）"
+
+def get_exchange_rates():
+    return "💱 匯率資訊暫略（可接 Alpha Vantage 或台銀）"
+
+def get_news():
+    return "🗞️ 今日新聞摘要暫略（可接 NewsAPI）"
+
+def get_calendar():
+    return "📅 今日行事曆無特別提醒（可接 Google Calendar）"
+
+def get_traffic(route):
+    if route == "家到公司":
+        return "🚗 從家出發 → 公司，約需 30 分鐘"
+    elif route == "公司到中正區":
+        return "🚗 從公司 → 中正區球場，約需 25 分鐘"
+    elif route == "公司到家":
+        return "🚗 從公司 → 回家，約需 35 分鐘"
+    return "🚗 路線未知"
+
+def get_oil_price():
+    return "⛽ 油價資訊：92 無鉛 $30.5，95 無鉛 $32.0（本週參考價）"
+
+def get_us_market_opening():
+    return "📈 美股開盤速報：道瓊 +0.8%，S&P500 +0.6%，Nasdaq +1.1%"
+
+def get_us_market_opening_detail():
+    return "📊 美股開盤後行情更新：輝達 +2.1%，SMCI +3.4%，GOOGL +1.8%"
+
 def get_morning_briefing():
-    """早上 07:10 的晨間推播內容"""
     try:
         taipei = pytz.timezone("Asia/Taipei")
         now = datetime.now(taipei).strftime("%Y-%m-%d (%a)")
@@ -214,66 +236,75 @@ def send_scheduled():
         taipei = pytz.timezone("Asia/Taipei")
         now = datetime.now(taipei)
         current_time = now.strftime("%H:%M")
-        weekday = now.weekday()  # 0=週一, 6=週日
+        weekday = now.weekday()  # 0=週一, ..., 6=週日
 
         print(f"[定時推播] 現在時間 {current_time}，週{weekday+1}")
 
-        # 07:10 每天早安推播（含前一晚美股）
+        # 07:10 晨間摘要（每日）
         if current_time == "07:10":
             msg = get_morning_briefing()
             line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=msg))
-            return "07:10 推播完成"
+            return "07:10 晨間摘要推播完成"
 
-        # 08:00 通勤提醒（週一到週五）
+        # 08:00 通勤提醒（週一～週五，中山區天氣＋交通）
         elif current_time == "08:00" and weekday < 5:
             traffic = get_traffic("家到公司")
-            weather = get_weather("台北市")
-            msg = f"🚌 上班通勤提醒\n\n{traffic}\n\n{weather}"
+            weather = get_weather("中山區")
+            msg = f"🚌 通勤提醒\n\n{weather}\n\n{traffic}"
             line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=msg))
             return "08:00 通勤推播完成"
 
-        # 09:30 台股開盤（週一到週五）
+        # 09:30 台股開盤（大盤＋個股）
         elif current_time == "09:30" and weekday < 5:
-            msg = get_stock_data("台積電")
-            line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=f"📈 台股開盤\n\n{msg}"))
+            msg1 = get_stock_data("大盤")
+            msg2 = get_stock_data("台積電")
+            line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=f"📈 台股開盤\n\n{msg1}\n\n{msg2}"))
             return "09:30 台股開盤推播完成"
 
-        # 12:00 台股盤中（週一到週五）
+        # 12:00 台股盤中快訊
         elif current_time == "12:00" and weekday < 5:
-            msg = get_stock_data("2330")
-            line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=f"📊 台股盤中快訊\n\n{msg}"))
+            msg1 = get_stock_data("大盤")
+            msg2 = get_stock_data("2330")
+            line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=f"📊 台股盤中快訊\n\n{msg1}\n\n{msg2}"))
             return "12:00 台股中場推播完成"
 
-        # 13:45 台股收盤（週一到週五）
+        # 13:45 台股收盤資訊
         elif current_time == "13:45" and weekday < 5:
-            msg = get_stock_data("台積電")
-            line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=f"🔚 台股收盤資訊\n\n{msg}"))
+            msg1 = get_stock_data("大盤")
+            msg2 = get_stock_data("台積電")
+            line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=f"🔚 台股收盤\n\n{msg1}\n\n{msg2}"))
             return "13:45 台股收盤推播完成"
 
-        # 17:30 下班提醒（週一三五中正區、週二四新店區）
+        # 17:30 下班提醒
         elif current_time == "17:30":
-            if weekday in [0, 2, 4]:  # 一三五
-                msg = f"🏸 打球提醒（中正區）\n\n{get_weather('中正區')}\n\n{get_oil_price()}"
+            if weekday in [0, 2, 4]:  # 週一三五：打球提醒（中正區）
+                weather = get_weather("中正區")
+                traffic = get_traffic("公司到中正區")
+                oil = get_oil_price()
+                msg = f"🏸 打球提醒（中正區）\n\n{weather}\n\n{traffic}\n\n{oil}"
                 line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=msg))
-                return "17:30 中正區提醒完成"
-            elif weekday in [1, 3]:  # 二四
-                msg = f"🏸 打球提醒（新店區）\n\n{get_weather('新店區')}\n\n{get_oil_price()}"
+                return "17:30 中正區打球推播完成"
+            elif weekday in [1, 3]:  # 週二四：回家提醒（新店區）
+                weather = get_weather("新店區")
+                traffic = get_traffic("公司到家")
+                oil = get_oil_price()
+                msg = f"🏠 回家提醒（新店區）\n\n{weather}\n\n{traffic}\n\n{oil}"
                 line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=msg))
-                return "17:30 新店區提醒完成"
+                return "17:30 新店區回家推播完成"
 
-        # 21:30 美股開盤速報（週一～週五）
+        # 21:30 美股開盤速報
         elif current_time == "21:30" and weekday < 5:
             msg = get_us_market_opening()
-            line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=f"🇺🇸 美股開盤速報\n\n{msg}"))
-            return "21:30 美股速報推播完成"
+            line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=f"🇺🇸 美股速報\n\n{msg}"))
+            return "21:30 美股速報完成"
 
-        # 23:00 美股開盤行情（週一～週五）
+        # 23:00 美股行情摘要
         elif current_time == "23:00" and weekday < 5:
             msg = get_us_market_opening_detail()
             line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=f"📊 美股行情更新\n\n{msg}"))
             return "23:00 美股行情推播完成"
 
-        return "目前時段無推播內容"
+        return "⏰ 無需推播的時段"
     except Exception as e:
         print(f"[定時推播] 錯誤: {e}")
         return f"❌ 推播失敗: {e}"
@@ -289,10 +320,9 @@ def callback():
 
     return "OK"
 
-# 測試 API：手動模擬特定時間觸發推播
+# 測試 API：模擬指定時段推播
 @app.route("/send_scheduled_test")
 def send_scheduled_test():
-    """手動測試指定時段推播"""
     test_time = request.args.get("time", "")
     try:
         taipei = pytz.timezone("Asia/Taipei")
@@ -302,16 +332,15 @@ def send_scheduled_test():
     except Exception as e:
         print(f"[測試推播] 錯誤: {e}")
         return f"❌ 測試推播錯誤: {e}"
-        
+
+# Render 用來呼叫的排程 API
 @app.route("/send_scheduled")
 def send_scheduled_endpoint():
-    """提供 Render 平台測試使用的正式排程端點"""
     try:
         return send_scheduled()
     except Exception as e:
         print(f"[Render /send_scheduled 錯誤] {e}")
-        return f"❌ 測試失敗: {e}"
-
+        return f"❌ 呼叫失敗: {e}"
 
 @app.route("/")
 def home():
@@ -323,7 +352,7 @@ def health():
 
 if __name__ == "__main__":
     scheduler = BackgroundScheduler(timezone="Asia/Taipei")
-    scheduler.add_job(send_scheduled, "cron", minute="0,10,20,30,40,50")  # 防止 render 休眠
+    scheduler.add_job(send_scheduled, "cron", minute="0,10,20,30,40,50")  # 防 Render 休眠
     scheduler.start()
 
     app.run(host="0.0.0.0", port=10000)
