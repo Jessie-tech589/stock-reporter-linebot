@@ -302,6 +302,16 @@ def send_scheduled_test():
     except Exception as e:
         print(f"[測試推播] 錯誤: {e}")
         return f"❌ 測試推播錯誤: {e}"
+        
+@app.route("/send_scheduled")
+def send_scheduled_endpoint():
+    """提供 Render 平台測試使用的正式排程端點"""
+    try:
+        return send_scheduled()
+    except Exception as e:
+        print(f"[Render /send_scheduled 錯誤] {e}")
+        return f"❌ 測試失敗: {e}"
+
 
 @app.route("/")
 def home():
