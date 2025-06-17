@@ -6,7 +6,7 @@ import pytz
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import TextSendMessage
+from linebot.models import MessageEvent, TextMessage, TextSendMessage
 from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
@@ -34,10 +34,12 @@ STOCK_MAPPING = {
     "2324": "2324.TW", "2609": "2609.TW", "2610": "2610.TW", "2618": "2618.TW"
 }
 
+STOCK_LIST = ["台積電", "聯電", "鴻準", "00918", "00878", "元大美債20年", "群益25年美債", "仁寶", "陽明", "華航", "長榮航"]
+
 def get_weather(location):
     try:
         url = f"http://api.openweathermap.org/data/2.5/weather?q={location}&appid={WEATHER_API_KEY}&lang=zh_tw&units=metric"
-        res = requests.get(url).json()
+        res = requests.get(url, timeout=10).json()
         temp = res["main"]["temp"]
         desc = res["weather"][0]["description"]
         humidity = res["main"]["humidity"]
@@ -48,46 +50,88 @@ def get_weather(location):
 
 def get_traffic(label):
     try:
-        address_map = {
-            "家到公司": ("新北市新店區建國路99巷", "台北市中山區南京東路三段131號"),
-            "公司到中正區": ("台北市中山區南京東路三段131號", "台北市中正區愛國東路216號"),
-            "公司到新店區": ("台北市中山區南京東路三段131號", "新北市新店區建國路99巷"),
+        # 使用 waypoints 自訂路線，完整市區名稱
+        route_waypoints = {
+            "家到公司": {
+                "origin": "新北市新店區建國路99巷",
+                "destination": "台北市中山區南京東路三段131號",
+                "waypoints": "新北市新店區民族路|新北市新店區北新路|台北市中正區羅斯福路|台北市大安區基隆路|台北市大安區辛亥路|台北市大安區復興南路"
+            },
+            "公司到中正區": {
+                "origin": "台北市中山區南京東路三段131號", 
+                "destination": "台北市中正區愛國東路216號",
+                "waypoints": "台北市大安區復興南路|台北市大安區信義路"
+            },
+            "公司到新店區": {
+                "origin": "台北市中山區南京東路三段131號",
+                "destination": "新北市新店區建國路99巷", 
+                "waypoints": "台北市大安區復興南路|台北市大安區辛亥路|台北市大安區基隆路|台北市中正區羅斯福路|新北市新店區北新路|新北市新店區民族路"
+            },
+            "公司到郵局": {
+                "origin": "台北市中山區南京東路三段131號",
+                "destination": "台北市中正區愛國東路21巷",
+                "waypoints": "台北市中山區林森北路|台北市中正區信義路|台北市中正區信義路二段10巷"
+            }
         }
-        if label not in address_map:
+        
+        if label not in route_waypoints:
             return "❌ 未知路線"
-        origin, destination = address_map[label]
+            
+        route = route_waypoints[label]
+        origin = route["origin"]
+        destination = route["destination"] 
+        waypoints = route["waypoints"]
+        
         url = (
             f"https://maps.googleapis.com/maps/api/directions/json"
-            f"?origin={origin}&destination={destination}&departure_time=now&mode=driving&key={GOOGLE_MAPS_API_KEY}"
+            f"?origin={origin}&destination={destination}&waypoints={waypoints}"
+            f"&departure_time=now&mode=driving&key={GOOGLE_MAPS_API_KEY}"
         )
-        res = requests.get(url).json()
+        
+        res = requests.get(url, timeout=10).json()
         if not res.get("routes"):
             return f"❌ 找不到路線"
-        leg = res["routes"][0]["legs"][0]
-        summary = res["routes"][0].get("summary", "(無路徑名稱)")
-        duration = leg.get("duration_in_traffic", leg["duration"])["text"]
-        duration_val = leg.get("duration_in_traffic", leg["duration"])["value"]
-        normal_val = leg["duration"]["value"]
-        # 紅黃綠燈
-        ratio = duration_val / normal_val if normal_val else 1
+            
+        route_info = res["routes"][0]
+        total_duration = sum([l.get("duration_in_traffic", l["duration"])["value"] for l in route_info["legs"]])
+        total_normal = sum([l["duration"]["value"] for l in route_info["legs"]])
+        
+        # 計算總時間
+        total_duration_text = f"{total_duration // 60} 分鐘"
+        
+        # 路況燈號
+        ratio = total_duration / total_normal if total_normal else 1
         if ratio > 1.25:
-            light = "🔴"
+            light = "🔴 壅塞"
         elif ratio > 1.05:
-            light = "🟡"
+            light = "🟡 緩慢" 
         else:
-            light = "🟢"
+            light = "🟢 順暢"
+            
         return (
-            f"🚗 路況：{origin} → {destination}\n"
-            f"🛵 建議路線：{summary}\n"
-            f"{light} 預估時間：{duration}"
+            f"🚗 自訂路線：{label}\n"
+            f"🛤️ 路徑：{origin} → {destination}\n"
+            f"🚦 路況：{light}\n"
+            f"⏰ 預估時間：{total_duration_text}"
         )
+        
     except Exception as e:
         return f"❌ 路況錯誤：{e}"
+
+def get_route_info(label):
+    """顯示妳指定的機車路跡（純資訊顯示）"""
+    routes = {
+        "家到公司": "🏠→🏢 機車路跡：\n新北市新店區建國路 → 新北市新店區民族路 → 新北市新店區北新路 → 台北市羅斯福路 → 台北市基隆路 → 台北市辛亥路 → 台北市復興南路 → 台北市南京東路 → 公司",
+        "公司到郵局": "🏢→📮 機車路跡：\n台北市南京東路 → 台北市林森北路 → 台北市信義路 → 台北市信義路二段10巷 → 台北市愛國東路21巷 → 金南郵局",
+        "公司到新店區": "🏢→🏠 機車路跡：\n台北市南京東路 → 台北市復興南路 → 台北市辛亥路 → 台北市基隆路 → 台北市羅斯福路 → 新北市新店區北新路 → 新北市新店區民族路 → 新北市新店區建國路 → 家",
+        "公司到中正區": "🏢→🏸 機車路跡：\n台北市南京東路 → 台北市復興南路 → 台北市信義路 → 台北市中正區愛國東路216號"
+    }
+    return routes.get(label, "❌ 路跡不存在")
 
 def get_news():
     try:
         url = f"https://newsapi.org/v2/top-headlines?country=tw&apiKey={NEWS_API_KEY}"
-        data = requests.get(url).json()
+        data = requests.get(url, timeout=10).json()
         articles = data.get("articles", [])[:3]
         if not articles:
             return "📭 今日無新聞"
@@ -98,7 +142,7 @@ def get_news():
 def get_exchange_rates():
     try:
         url = f"https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=USD&to_currency=TWD&apikey={ALPHA_VANTAGE_API_KEY}"
-        data = requests.get(url).json()
+        data = requests.get(url, timeout=10).json()
         rate = data["Realtime Currency Exchange Rate"]["5. Exchange Rate"]
         return f"💵 美元匯率：1 USD ≒ {float(rate):.2f} TWD"
     except Exception as e:
@@ -229,21 +273,21 @@ def send_scheduled():
         elif time_str == "09:30" and weekday < 5:
             text = "📈 台股開盤快訊\n\n"
             text += get_stock_data("大盤") + "\n\n"
-            for k in ["台積電","聯電","鴻準","00918","00878","元大美債20年","群益25年美債","仁寶","陽明","華航","長榮航","2330","2303","2354","2324","2609","2610","2618"]:
+            for k in STOCK_LIST:
                 text += get_stock_data(k) + "\n"
             line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=text.strip()))
 
         elif time_str == "12:00" and weekday < 5:
             text = "📊 台股盤中快訊\n\n"
             text += get_stock_data("大盤") + "\n\n"
-            for k in ["台積電","聯電","鴻準","00918","00878","元大美債20年","群益25年美債","仁寶","陽明","華航","長榮航","2330","2303","2354","2324","2609","2610","2618"]:
+            for k in STOCK_LIST:
                 text += get_stock_data(k) + "\n"
             line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=text.strip()))
 
         elif time_str == "13:45" and weekday < 5:
             text = "🔚 台股收盤資訊\n\n"
             text += get_stock_data("大盤") + "\n\n"
-            for k in ["台積電","聯電","鴻準","00918","00878","元大美債20年","群益25年美債","仁寶","陽明","華航","長榮航","2330","2303","2354","2324","2609","2610","2618"]:
+            for k in STOCK_LIST:
                 text += get_stock_data(k) + "\n"
             line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=text.strip()))
 
@@ -273,6 +317,46 @@ def send_scheduled():
     except Exception as e:
         print(f"[推播錯誤] {e}")
 
+@handler.add(MessageEvent, message=TextMessage)
+def handle_message(event):
+    try:
+        user_message = event.message.text.strip()
+        lower_message = user_message.lower()
+        
+        reply = "感謝妳的訊息！\n很抱歉，本機器人主要提供定時推播服務。\n敬請期待我們的推播內容😊"
+        
+        if lower_message in ["hi", "hello", "妳好", "哈囉", "嗨", "安安"]:
+            reply = "🤖 妳好！\n\n📊 股票查詢：輸入股票名稱\n🌤️ 天氣查詢：輸入「天氣」\n🚗 交通查詢：輸入「交通」\n🛤️ 路跡查詢：輸入「路跡」\n📰 新聞查詢：輸入「新聞」\n⛽ 油價查詢：輸入「油價」\n💵 匯率查詢：輸入「匯率」"
+            
+        elif "天氣" in user_message:
+            reply = get_weather("台北市")
+        elif "交通" in user_message or "路況" in user_message:
+            reply = get_traffic("家到公司")
+        elif "路跡" in user_message:
+            reply = get_route_info("家到公司")
+        elif "新聞" in user_message:
+            reply = get_news()
+        elif "油價" in user_message:
+            reply = get_oil_price()
+        elif "匯率" in user_message:
+            reply = get_exchange_rates()
+        elif "美股" in user_message:
+            reply = get_us_market_opening()
+        elif user_message in STOCK_MAPPING:
+            reply = get_stock_data(user_message)
+        
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=reply)
+        )
+        
+    except Exception as e:
+        print(f"Handle message error: {e}")
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="系統處理訊息時發生錯誤，請稍後再試。")
+        )
+
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature")
@@ -293,26 +377,17 @@ def send_scheduled_test():
     test_time = request.args.get("time")
     if not test_time:
         return "請指定 time=HH:MM"
-    taipei = pytz.timezone("Asia/Taipei")
-    now = datetime.now(taipei)
-    weekday = now.weekday()
-    orig_datetime = datetime
-
-    class FakeNow(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            t = orig_datetime.strptime(test_time, "%H:%M").replace(
-                year=now.year, month=now.month, day=now.day
-            )
-            return tz.localize(t) if tz else t
-
-    import builtins
-    builtins.datetime = FakeNow
-    try:
-        send_scheduled()
-        return f"已模擬 {test_time} 推播"
-    finally:
-        builtins.datetime = orig_datetime
+    
+    if test_time == "07:10":
+        taipei = pytz.timezone("Asia/Taipei")
+        now = datetime.now(taipei)
+        date_str = now.strftime("%Y-%m-%d (%a)")
+        text = f"🌅 [測試] 早安，今天是 {date_str}\n\n{get_weather('台北市')}"
+        if LINE_USER_ID:
+            line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=text))
+        return f"已發送 {test_time} 測試訊息"
+    else:
+        return f"測試時間 {test_time} 功能開發中"
 
 @app.route("/")
 def home():
