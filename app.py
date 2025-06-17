@@ -276,7 +276,7 @@ def schedule_all_jobs():
     scheduler.add_job(keep_alive_trigger, CronTrigger(minute="0,10,20,30,40,45,50"))
     scheduler.start()
 
-@app.route("/send_scheduled_test", methods=["GET"])
+@app.route("/send_scheduled", methods=["GET"])
 def send_scheduled_test():
     time_str = request.args.get("time")
     test_map = {
