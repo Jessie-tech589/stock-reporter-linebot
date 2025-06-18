@@ -228,8 +228,10 @@ def callback():
         abort(400)
     return "OK"
 
-@app.route("/")       ; def home():   return "✅ LINE Bot 正常運作中"
-@app.route("/health") ; def health(): return "OK"
+@app.route("/")       ; 
+def home():   return "✅ LINE Bot 正常運作中"
+@app.route("/health") ; 
+def health(): return "OK"
 
 # 手動模擬端點
 @app.route("/send_scheduled_test")
