@@ -49,17 +49,30 @@ def safe_get(url, timeout=10):
     except: return None
 
 # ───────── 天氣（地理編碼→即時天氣） ─────────
-def weather(loc:str):
-    g=safe_get(f"http://api.openweathermap.org/geo/1.0/direct?q={loc},TW&limit=1&appid={WEATHER_API_KEY}")
-    if not g or not g.json(): return "天氣查詢失敗"
-    lat,lon=g.json()[0]['lat'],g.json()[0]['lon']
-    w=safe_get(f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&lang=zh_tw&units=metric")
-    if not w: return "天氣查詢失敗"
+# ── weather() 改成雙層 fallback ─────────────────────────────
+from urllib.parse import quote
+
+def weather(loc: str) -> str:
+    def query(q):
+        url = f"http://api.openweathermap.org/geo/1.0/direct?q={quote(q)}&limit=1&appid={WEATHER_API_KEY}"
+        r = safe_get(url)
+        return r.json()[0] if r and r.json() else None
+
+    geo = query(loc) or query(loc.replace("區","")) or query("台北市")
+    if not geo:
+        return "天氣查詢失敗"
+
+    lat, lon = geo["lat"], geo["lon"]
+    w = safe_get(f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&lang=zh_tw&units=metric")
+    if not w:
+        return "天氣查詢失敗"
     try:
-        d=w.json(); t=d["main"]["temp"]; desc=d["weather"][0]["description"]
-        hum=d["main"]["humidity"]; ws=d["wind"]["speed"]
+        d = w.json()
+        t, desc = d["main"]["temp"], d["weather"][0]["description"]
+        hum, ws = d["main"]["humidity"], d["wind"]["speed"]
         return f"🌤️ {loc} {desc}\n🌡️{t}°C 💧{hum}% 💨{ws}m/s"
-    except: return "天氣查詢失敗"
+    except Exception:
+        return "天氣查詢失敗"
 
 # ───────── 匯率（爬臺銀） ─────────
 def fx():
@@ -73,17 +86,20 @@ def fx():
 
 # ───────── 油價（爬中油） ─────────
 def oil():
-    base="https://www.cpc.com.tw"
-    lst=safe_get(f"{base}/NewsContent.aspx?type=3")
-    if not lst: return "油價查詢失敗"
+    url = "https://www.cpc.com.tw/csv/132.csv"
+    r = safe_get(url)
+    if not r:
+        return "油價查詢失敗"
     try:
-        first=BeautifulSoup(lst.text,"lxml").select_one(".news-list a")
-        det=safe_get(base+first["href"])
-        if not det: return "油價查詢失敗"
-        txt=BeautifulSoup(det.text,"lxml").get_text(" ",strip=True)
-        price={k:re.search(k+r".*?([\d.]+)元",txt).group(1) for k in ["92","95","98","超柴"] if re.search(k+r".*?([\d.]+)元",txt)}
-        return "⛽ 今日油價：\n"+"\n".join(f"{k}: {v} 元" for k,v in price.items()) if price else "油價查詢失敗"
-    except: return "油價查詢失敗"
+        rows = r.text.splitlines()
+        data = rows[1].split(',')           
+        return ("⛽ 今日油價：\n"
+                f"92: {data[1]} 元\n"
+                f"95: {data[2]} 元\n"
+                f"98: {data[3]} 元\n"
+                f"超柴: {data[4]} 元")
+    except Exception:
+        return "油價查詢失敗"
 
 # ───────── 新聞 ─────────
 def news():
