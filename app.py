@@ -179,6 +179,39 @@ def us():
             + "\n".join(line(c,n) for n,c in idx.items()) + "\n"
             + "\n".join(line(c,n) for c,n in focus.items()))
 
+# ── 新增：即時美股開盤前行情 ─────────────────────────
+def us_open():
+    tickers = {
+        "道瓊": "^DJI",
+        "S&P500": "^GSPC",
+        "NASDAQ": "^IXIC",
+        "NVDA": "NVDA",
+        "SMCI": "SMCI",
+        "GOOGL": "GOOGL",
+        "AAPL": "AAPL"
+    }
+    lines = []
+    for name, code in tickers.items():
+        try:
+            info = yf.Ticker(code).info
+            price = info.get("regularMarketPrice")
+            prev  = info.get("previousClose")
+            if price and prev:
+                diff = price - prev
+                pct  = diff / prev * 100
+                emo  = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
+                lines.append(f"{emo} {name}: {price:.2f} ({diff:+.2f},{pct:+.2f}%)")
+        except Exception:
+            pass
+    return "🇺🇸 美股開盤速報\n\n" + "\n".join(lines) if lines else "美股查詢失敗"
+
+# ── 修改 21:30 任務 ─────────────────────────────
+def j2130():
+    push(us_open())
+
+# (排程宣告保留不動：sch.add_job(j2130, 'cron', hour=21, minute=30, day_of_week='mon-fri'))
+
+
 # ───────── LINE Push ─────────
 def push(msg): line_bot_api.push_message(LINE_USER_ID,TextSendMessage(text=msg.strip()))
 
@@ -197,14 +230,14 @@ def j0930(): _tai("📈 台股開盤")
 def j1200(): _tai("📊 台股盤中")
 def j1345(): _tai("🔚 台股收盤")
 
-def j1730():   # 依星期自動分流
+def j1800():   # 依星期自動分流
     wd=datetime.now(tz).weekday()
     if wd in (0,2,4):   # 一三五
         push("🏸 下班打球提醒（中正區）\n\n"+traffic("公司到中正區")+"\n\n"+weather("台北市中正區")+"\n\n"+oil())
     else:               # 二四
         push("🏠 下班回家提醒（新店區）\n\n"+traffic("公司到新店區")+"\n\n"+weather("新北市新店區")+"\n\n"+oil())
 
-def j2130(): push("🇺🇸 美股開盤速報\n\n"+us())
+def j2130(): push(us_open())
 def j2300(): push("📊 美股行情更新\n\n"+us())
 def keep():  safe_get("https://example.com")
 
@@ -215,7 +248,7 @@ sch.add_job(j0800 ,'cron',hour=8 ,minute=0 ,day_of_week='mon-fri')
 sch.add_job(j0930 ,'cron',hour=9 ,minute=30,day_of_week='mon-fri')
 sch.add_job(j1200 ,'cron',hour=12,minute=0 ,day_of_week='mon-fri')
 sch.add_job(j1345 ,'cron',hour=13,minute=45,day_of_week='mon-fri')
-sch.add_job(j1730 ,'cron',hour=17,minute=30,day_of_week='mon-fri')
+sch.add_job(j1730 ,'cron',hour=18,minute=00,day_of_week='mon-fri')
 sch.add_job(j2130 ,'cron',hour=21,minute=30,day_of_week='mon-fri')
 sch.add_job(j2300 ,'cron',hour=23,minute=0 ,day_of_week='mon-fri')
 sch.add_job(keep  ,'cron',minute='0,10,20,30,40,50')
