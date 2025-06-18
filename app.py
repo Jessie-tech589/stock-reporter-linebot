@@ -180,6 +180,7 @@ def us():
             + "\n".join(line(c,n) for c,n in focus.items()))
 
 # ── 新增：即時美股開盤前行情 ─────────────────────────
+
 def us_open():
     tickers = {
         "道瓊": "^DJI",
@@ -192,17 +193,27 @@ def us_open():
     }
     lines = []
     for name, code in tickers.items():
+        price = prev = None
         try:
-            info = yf.Ticker(code).info
+            tkr   = yf.Ticker(code)
+            info  = tkr.fast_info or tkr.info        # fast_info 速度較快
             price = info.get("regularMarketPrice")
             prev  = info.get("previousClose")
-            if price and prev:
-                diff = price - prev
-                pct  = diff / prev * 100
-                emo  = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
-                lines.append(f"{emo} {name}: {price:.2f} ({diff:+.2f},{pct:+.2f}%)")
+            # -------- fallback 取 1m K 線 ----------
+            if price is None:
+                hist = tkr.history(period="1d", interval="1m")
+                if not hist.empty:
+                    price = hist["Close"].iloc[-1]
+                    prev  = hist["Close"].iloc[0]
         except Exception:
             pass
+
+        if price and prev:
+            diff = price - prev
+            pct  = diff / prev * 100
+            emo  = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
+            lines.append(f"{emo} {name}: {price:.2f} ({diff:+.2f},{pct:+.2f}%)")
+
     return "🇺🇸 美股開盤速報\n\n" + "\n".join(lines) if lines else "美股查詢失敗"
 
 
