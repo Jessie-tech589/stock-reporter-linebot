@@ -130,6 +130,11 @@ def stock(name: str) -> str:
                 f"{sym}?apiToken={FUGLE_API_KEY}"
             )
             r  = safe_get(quote_url)
+# ▼▼ 在這裡加兩行 debug 列印 ▼▼
+            print("[FUGLE-RAW]", r.status_code if r else "None")
+            print("[FUGLE-JSON]", r.text[:400] if r else "no response")
+
+            
             dq = r.json().get("data", {}).get("quote") if r else None
             price = dq.get("tradePrice") if dq else None
             prev  = dq.get("prevClose")  if dq else None
