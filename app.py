@@ -118,26 +118,42 @@ def stock(name: str) -> str:
     """
     code = STOCK.get(name, name)
 
-    # ---------- 台股先走 Fugle ----------
+
+ # ---------- 台股 (.TW)：先 Fugle，沒有即時價就抓收盤價 ----------
     if code.endswith(".TW") and FUGLE_API_KEY:
         try:
-            sym = code[:-3]          # 2330.TW -> 2330
-            url = (
+            sym = code[:-3]                      # 2330.TW → 2330
+
+            # ① 先要即時價（盤中才會有 tradePrice）
+            quote_url = (
                 f"https://api.fugle.tw/marketdata/v1.0/intraday/quote/"
                 f"{sym}?apiToken={FUGLE_API_KEY}"
             )
-            r = safe_get(url)
-            if r and r.status_code == 200:
-                quote = r.json().get("data", {}).get("quote")
-                if quote and quote.get("tradePrice"):
-                    price = quote["tradePrice"]
-                    prev  = quote["prevClose"]
-                    diff  = price - prev
-                    pct   = diff / prev * 100 if prev else 0
-                    emo   = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
-                    return f"{emo} {name}\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
+            r  = safe_get(quote_url)
+            dq = r.json().get("data", {}).get("quote") if r else None
+            price = dq.get("tradePrice") if dq else None
+            prev  = dq.get("prevClose")  if dq else None
+
+            # ② 盤後沒有即時價 → 改抓收盤價
+            if price is None:
+                price_url = (
+                    f"https://api.fugle.tw/marketdata/v1.0/stock/price/"
+                    f"{sym}?apiToken={FUGLE_API_KEY}"
+                )
+                r2   = safe_get(price_url)
+                dp   = r2.json().get("data", {}).get("price") if r2 else None
+                price = dp.get("closingPrice") if dp else None
+                prev  = dp.get("prevClose")    if dp else None
+
+            if price and prev:
+                diff = price - prev
+                pct  = diff / prev * 100 if prev else 0
+                emo  = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
+                return f"{emo} {name}\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
+
         except Exception as e:
-            print("[FUGLE-ERR]", code, e)  # 只在 log 顯示，不影響流程
+            print("[FUGLE-ERR]", code, e)  # 只在 log 顯示，不影響後續
+
 
     # ---------- Yahoo (所有股票通用) ----------
     try:
