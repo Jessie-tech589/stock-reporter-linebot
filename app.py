@@ -25,6 +25,7 @@ GOOGLE_MAPS_API_KEY      = os.getenv("GOOGLE_MAPS_API_KEY")      # Directions AP
 NEWS_API_KEY             = os.getenv("NEWS_API_KEY")             # NewsAPI
 GOOGLE_CREDS_JSON_B64    = os.getenv("GOOGLE_CREDS_JSON")        # service-account.json → b64
 GOOGLE_CALENDAR_ID       = os.getenv("GOOGLE_CALENDAR_ID","primary")
+FUGLE_API_KEY            = os.getenv("FUGLE_API_KEY")
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler      = WebhookHandler(LINE_CHANNEL_SECRET)
