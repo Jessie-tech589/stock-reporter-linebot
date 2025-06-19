@@ -24,6 +24,8 @@ NEWS_API_KEY             = os.getenv("NEWS_API_KEY")
 GOOGLE_CREDS_JSON_B64    = os.getenv("GOOGLE_CREDS_JSON")
 GOOGLE_CALENDAR_ID       = os.getenv("GOOGLE_CALENDAR_ID","primary")
 FUGLE_API_KEY            = os.getenv("FUGLE_API_KEY")
+FINNHUB_API_KEY          = os.getenv("FINNHUB_API_KEY")
+
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler      = WebhookHandler(LINE_CHANNEL_SECRET)
@@ -342,6 +344,9 @@ def home():
 @app.route("/test_fx")
 def test_fx():
     return fx()
+@app.route("/test_us")
+def test_us():
+    return us()
 
 
 @app.route("/test_stock")
