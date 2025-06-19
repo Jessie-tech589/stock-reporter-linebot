@@ -62,20 +62,23 @@ def safe_get(url, timeout=10):
         return None
 
 def weather(loc: str) -> str:
-    url = (f"https://opendata.cwb.gov.tw/api/v1/rest/datastore/F-C0032-001"
+    url = (f"https://opendata.cwb.gov.tw/api/v1/rest/datastore/F-D0047-089"
            f"?Authorization={CWB_API_KEY}&locationName={quote(loc)}")
     r = safe_get(url)
     try:
         d = r.json() if r else {}
-        locs = d.get("records", {}).get("location", [])
-        if not locs:
+        locs = d.get("records", {}).get("locations", [])
+        if not locs or not locs[0]["location"]:
             return f"天氣查詢失敗（{loc}）"
-        info = locs[0]
-        w = info["weatherElement"]
-        wx = w[0]["time"][0]["parameter"]["parameterName"]
-        pop = w[1]["time"][0]["parameter"]["parameterName"]
-        minT = w[2]["time"][0]["parameter"]["parameterName"]
-        maxT = w[4]["time"][0]["parameter"]["parameterName"]
+        info = locs[0]["location"][0]
+        # 天氣現象
+        wx = info["weatherElement"][6]["time"][0]["elementValue"][0]["value"]
+        # 降雨機率
+        pop = info["weatherElement"][7]["time"][0]["elementValue"][0]["value"]
+        # 最低溫
+        minT = info["weatherElement"][8]["time"][0]["elementValue"][0]["value"]
+        # 最高溫
+        maxT = info["weatherElement"][12]["time"][0]["elementValue"][0]["value"]
         return (f"🌦️ {loc}\n"
                 f"{wx}，降雨 {pop}%\n"
                 f"🌡️ {minT}～{maxT}°C")
