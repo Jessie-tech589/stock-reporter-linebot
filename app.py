@@ -1,7 +1,4 @@
-# ───────────────────────────────────────────
-#  app.py － LINE Bot 生活播報員（正式無測試版）
-# ───────────────────────────────────────────
-import os, base64, json, re, threading, requests, yfinance as yf
+import os, base64, json, re, requests, yfinance as yf
 from datetime import datetime, timedelta, date
 import pytz
 from flask import Flask, request, abort
@@ -12,32 +9,32 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from bs4 import BeautifulSoup
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from urllib.parse import quote
 
 app = Flask(__name__)
 tz = pytz.timezone("Asia/Taipei")
 
-# ───────── ENV ─────────
+# ========== ENV ===============
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "dummy")
 LINE_CHANNEL_SECRET      = os.getenv("LINE_CHANNEL_SECRET", "dummy")
 LINE_USER_ID             = os.getenv("LINE_USER_ID")
-WEATHER_API_KEY          = os.getenv("WEATHER_API_KEY")          # OpenWeather
-GOOGLE_MAPS_API_KEY      = os.getenv("GOOGLE_MAPS_API_KEY")      # Directions API
-NEWS_API_KEY             = os.getenv("NEWS_API_KEY")             # NewsAPI
-GOOGLE_CREDS_JSON_B64    = os.getenv("GOOGLE_CREDS_JSON")        # service-account.json → b64
+WEATHER_API_KEY          = os.getenv("WEATHER_API_KEY")
+GOOGLE_MAPS_API_KEY      = os.getenv("GOOGLE_MAPS_API_KEY")
+NEWS_API_KEY             = os.getenv("NEWS_API_KEY")
+GOOGLE_CREDS_JSON_B64    = os.getenv("GOOGLE_CREDS_JSON")
 GOOGLE_CALENDAR_ID       = os.getenv("GOOGLE_CALENDAR_ID","primary")
 FUGLE_API_KEY            = os.getenv("FUGLE_API_KEY")
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler      = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# ───────── 股票對照 ─────────
+# ========== STOCK MAPPING =============
 STOCK = {
     "輝達":"NVDA","美超微":"SMCI","GOOGL":"GOOGL","Google":"GOOGL",
     "蘋果":"AAPL","特斯拉":"TSLA","微軟":"MSFT",
     "台積電":"2330.TW","聯電":"2303.TW",
     "鴻準":"2354.TW","仁寶":"2324.TW",
-    "陽明":"2609.TW","華航":"2610.TW",
-    "長榮航":"2618.TW",
+    "陽明":"2609.TW","華航":"2610.TW","長榮航":"2618.TW",
     "00918":"00918.TW","00878":"00878.TW",
     "元大美債20年":"00679B.TW","群益25年美債":"00723B.TW",
     "大盤":"^TWII"
@@ -45,35 +42,25 @@ STOCK = {
 
 def safe_get(url, timeout=10):
     try:
-        r=requests.get(url,timeout=timeout,headers={"User-Agent":"Mozilla/5.0"})
+        r = requests.get(url, timeout=timeout, headers={"User-Agent":"Mozilla/5.0"})
         return r if r.status_code==200 else None
-    except: return None
+    except Exception as e:
+        print("[REQ-ERR]", url, e)
+        return None
 
-# ───────── 天氣（地理編碼→即時天氣） ─────────
-# ── weather() 改成雙層 fallback ─────────────────────────────
-from urllib.parse import quote
-
+# ========== 天氣 ==========
 def weather(loc: str) -> str:
     def query(q):
-        url = f"http://api.openweathermap.org/geo/1.0/direct?q={quote(q)}&limit=1&appid={WEATHER_API_KEY}"
+        url = f"http://api.openweathermap.org/geo/1.0/direct?q={quote(q+',台灣')}&limit=1&appid={WEATHER_API_KEY}"
         r = safe_get(url)
-        return r.json()[0] if r and r.json() else None
-
+        try:
+            return r.json()[0] if r and r.json() else None
+        except: return None
     geo = query(loc) or query(loc.replace("區","")) or query("台北市")
-    # ❶ ── DEBUG：印出地理編碼結果 ───────────────────────────
-    print("[WX-GEO]", loc, "→", geo)
-    # ───────────────────────────────────────────────────────
-    
     if not geo:
-        return "天氣查詢失敗"
-
+        return f"天氣查詢失敗（{loc}）"
     lat, lon = geo["lat"], geo["lon"]
     w = safe_get(f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&lang=zh_tw&units=metric")
-    # ❷ ── DEBUG：印出 HTTP 狀態碼＋前 200 字 ────────────────
-    print("[WX-HTTP]", w.status_code if w else "None")
-    print("[WX-BODY]", (w.text[:200] + "...") if w else "no response")
-    # ───────────────────────────────────────────────────────
-    
     if not w:
         return "天氣查詢失敗"
     try:
@@ -81,98 +68,111 @@ def weather(loc: str) -> str:
         t, desc = d["main"]["temp"], d["weather"][0]["description"]
         hum, ws = d["main"]["humidity"], d["wind"]["speed"]
         return f"🌤️ {loc} {desc}\n🌡️{t}°C 💧{hum}% 💨{ws}m/s"
-    except Exception:
+    except Exception as e:
+        print("[WX-ERR]", e)
         return "天氣查詢失敗"
 
-# ───────── 匯率（爬臺銀） ─────────
+# ========== 匯率 ==========
 def fx():
-    r=safe_get("https://rate.bot.com.tw/xrt?Lang=zh-TW")
-    if not r: return "匯率查詢失敗"
-    try:
-        usd_row=BeautifulSoup(r.text,"lxml").find("td",text="USD").parent
-        sell=usd_row.select_one("td[data-table='本行現金賣出']").text.strip()
-        return f"💵 美元匯率：1 USD ≒ {sell} TWD"
-    except: return "匯率查詢失敗"
-
-# ───────── 油價（爬中油） ─────────
-def oil():
-    url = "https://www.cpc.com.tw/csv/132.csv"
+    # 台銀匯率表網址
+    url = "https://rate.bot.com.tw/xrt?Lang=zh-TW"
     r = safe_get(url)
     if not r:
-        return "油價查詢失敗"
+        return "匯率查詢失敗"
     try:
-        rows = r.text.splitlines()
-        data = rows[1].split(',')           
-        return ("⛽ 今日油價：\n"
-                f"92: {data[1]} 元\n"
-                f"95: {data[2]} 元\n"
-                f"98: {data[3]} 元\n"
-                f"超柴: {data[4]} 元")
-    except Exception:
-        return "油價查詢失敗"
+        soup = BeautifulSoup(r.text, "lxml")
+        table = soup.find("table")
+        rows = table.find_all("tr")
+        result = []
+        mapping = {
+            "美元 (USD)": "USD",
+            "日圓 (JPY)": "JPY",
+            "人民幣 (CNY)": "CNY",
+            "港幣 (HKD)": "HKD",
+        }
+        for row in rows:
+            cells = row.find_all("td")
+            if len(cells) > 0:
+                name = cells[0].text.strip()
+                if name in mapping:
+                    rate = cells[2].text.strip()  # 本行現金賣出
+                    flag = {"USD":"🇺🇸", "JPY":"🇯🇵", "CNY":"🇨🇳", "HKD":"🇭🇰"}[mapping[name]]
+                    result.append(f"{flag} {mapping[name]}：{rate}")
+        return "💱 今日匯率（現金賣出）\n" + "\n".join(result) if result else "查無匯率資料"
+    except Exception as e:
+        print("[FX-ERR]", e)
+        return "匯率查詢失敗"
 
-# ───────── 新聞 ─────────
+
+# ========== 油價 ==========
+def oil():
+    # 官方公開網頁
+    url = "https://vipmbr.cpc.com.tw/mbwebs/mbprice_oil.aspx"
+    r = safe_get(url)
+    try:
+        if r:
+            soup = BeautifulSoup(r.text, "lxml")
+            table = soup.find("table", {"id":"gvOilPrice"})
+            rows = table.find_all("tr") if table else []
+            if len(rows) > 2:
+                cells = rows[1].find_all("td")
+                price_92 = cells[1].text.strip()
+                price_95 = cells[2].text.strip()
+                price_98 = cells[3].text.strip()
+                price_ds = cells[4].text.strip()
+                return (f"⛽ 今日油價：\n"
+                        f"92: {price_92} 元\n"
+                        f"95: {price_95} 元\n"
+                        f"98: {price_98} 元\n"
+                        f"超柴: {price_ds} 元")
+    except Exception as e:
+        print("[OIL-ERR]", e)
+    return "油價查詢失敗"
+
+# ========== 新聞 ==========
 def news():
-    r=safe_get(f"https://newsapi.org/v2/top-headlines?country=tw&apiKey={NEWS_API_KEY}")
-    arts=[a["title"] for a in (r.json().get("articles",[]) if r else []) if a.get("title")] [:3]
-    return "\n".join("• "+t for t in arts) if arts else "今日無新聞"
+    r = safe_get(f"https://newsapi.org/v2/top-headlines?country=tw&apiKey={NEWS_API_KEY}")
+    try:
+        arts = [a["title"] for a in (r.json().get("articles",[]) if r else []) if a.get("title")] [:3]
+        return "\n".join("• "+t for t in arts) if arts else "今日無新聞"
+    except Exception as e:
+        print("[NEWS-ERR]", e)
+        return "新聞查詢失敗"
 
-# ───────── 股票 ─────────
-
+# ========== 股票 ==========
 def stock(name: str) -> str:
-    """
-    兩層來源：
-      1. 台股 (.TW) ➜ 先 Fugle (需要 FUGLE_API_KEY)，失敗才用 Yahoo
-      2. 其它 ➜ 直接 Yahoo
-    """
     code = STOCK.get(name, name)
-
-
- # ---------- 台股 (.TW)：先 Fugle，沒有即時價就抓收盤價 ----------
+    # 台股 .TW 先用 Fugle, fallback TWSE, 最後 Yahoo
     if code.endswith(".TW") and FUGLE_API_KEY:
+        sym = code.replace(".TW", "")
         try:
-            sym = code[:-3]                      # 2330.TW → 2330
-
-            # ① 先要即時價（盤中才會有 tradePrice）
-            quote_url = (
-                f"https://api.fugle.tw/marketdata/v1.0/intraday/quote/"
-                f"{sym}?apiToken={FUGLE_API_KEY}"
-            )
-            r  = safe_get(quote_url)
-# ▼▼ 在這裡加兩行 debug 列印 ▼▼
-            print("[FUGLE-RAW]", r.status_code if r else "None")
-            print("[FUGLE-JSON]", r.text[:400] if r else "no response")
-
-            
+            url = f"https://api.fugle.tw/marketdata/v1.0/intraday/quote/{sym}?apiToken={FUGLE_API_KEY}"
+            r = safe_get(url)
             dq = r.json().get("data", {}).get("quote") if r else None
             price = dq.get("tradePrice") if dq else None
             prev  = dq.get("prevClose")  if dq else None
-
-            # ② 盤後沒有即時價 → 改抓收盤價
-            if price is None:
-                price_url = (
-                    f"https://api.fugle.tw/marketdata/v1.0/stock/price/"
-                    f"{sym}?apiToken={FUGLE_API_KEY}"
-                )
-                r2   = safe_get(price_url)
-                dp   = r2.json().get("data", {}).get("price") if r2 else None
-                price = dp.get("closingPrice") if dp else None
-                prev  = dp.get("prevClose")    if dp else None
-
             if price and prev:
                 diff = price - prev
                 pct  = diff / prev * 100 if prev else 0
                 emo  = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
                 return f"{emo} {name}\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
-
         except Exception as e:
-            print("[FUGLE-ERR]", code, e)  # 只在 log 顯示，不影響後續
-
-
-    # ---------- Yahoo (所有股票通用) ----------
+            print("[FUGLE-ERR]", code, e)
+        # fallback TWSE openapi
+        try:
+            url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_AVG_ALL"
+            r = safe_get(url)
+            data = r.json() if r else []
+            for row in data:
+                if row.get('證券代號') == sym.zfill(4):
+                    price = float(row['收盤價'])
+                    return f"➡️ {name}\n💰 {price:.2f}\n(僅收盤價)"
+        except Exception as e:
+            print("[TWSE-ERR]", code, e)
+    # 其它用 Yahoo (如美股)
     try:
-        tkr   = yf.Ticker(code)
-        info  = getattr(tkr, "fast_info", {}) or tkr.info
+        tkr = yf.Ticker(code)
+        info = getattr(tkr, "fast_info", {}) or tkr.info
         price = info.get("regularMarketPrice")
         prev  = info.get("previousClose")
         if price and prev:
@@ -182,26 +182,25 @@ def stock(name: str) -> str:
             return f"{emo} {name}\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
     except Exception as e:
         print("[YF-ERR]", code, e)
-
     return f"❌ {name} 查無股價"
 
-
-
-# ───────── 行事曆 ─────────
+# ========== 行事曆 ==========
 def cal():
     if not GOOGLE_CREDS_JSON_B64: return "行事曆查詢失敗"
-    info=json.loads(base64.b64decode(GOOGLE_CREDS_JSON_B64))
-    creds=service_account.Credentials.from_service_account_info(info,scopes=["https://www.googleapis.com/auth/calendar.readonly"])
-    svc=build("calendar","v3",credentials=creds,cache_discovery=False)
-    today=date.today()
-    start=tz.localize(datetime.combine(today,datetime.min.time())).isoformat()
-    end  =tz.localize(datetime.combine(today,datetime.max.time())).isoformat()
     try:
+        info=json.loads(base64.b64decode(GOOGLE_CREDS_JSON_B64))
+        creds=service_account.Credentials.from_service_account_info(info,scopes=["https://www.googleapis.com/auth/calendar.readonly"])
+        svc=build("calendar","v3",credentials=creds,cache_discovery=False)
+        today=date.today()
+        start=tz.localize(datetime.combine(today,datetime.min.time())).isoformat()
+        end  =tz.localize(datetime.combine(today,datetime.max.time())).isoformat()
         items=svc.events().list(calendarId=GOOGLE_CALENDAR_ID,timeMin=start,timeMax=end,singleEvents=True,orderBy="startTime",maxResults=10).execute().get("items",[])
         return "\n".join("🗓️ "+e["summary"] for e in items if e.get("summary")) or "今日無行程"
-    except: return "行事曆查詢失敗"
+    except Exception as e:
+        print("[CAL-ERR]", e)
+        return "行事曆查詢失敗"
 
-# ───────── 路況 ─────────
+# ========== 路況 ==========
 def traffic(label):
     cfg={
       "家到公司":dict(
@@ -230,25 +229,28 @@ def traffic(label):
     lamp="🔴" if sec/base>1.25 else "🟡" if sec/base>1.05 else "🟢"
     return f"🚗 {cfg['o']} → {cfg['d']}\n🛵 {cfg['sum']}\n{lamp} {dur['text']}"
 
-# ───────── 美股摘要 ─────────
+# ========== 美股前一晚摘要 ==========
 def us():
-    us_tz=pytz.timezone("US/Eastern")
-    ref=datetime.now(us_tz)-timedelta(days=3 if datetime.now(us_tz).weekday()==0 else 1)
-    d=ref.date()
+    us_tz = pytz.timezone("US/Eastern")
+    today = datetime.now(us_tz).date()
+    ref = today - timedelta(days=3 if today.weekday()==0 else 1)
     idx={"道瓊":"^DJI","S&P500":"^GSPC","NASDAQ":"^IXIC"}
     focus={"NVDA":"輝達","SMCI":"美超微","GOOGL":"Google","AAPL":"蘋果"}
     def line(code,name):
-        h=yf.Ticker(code).history(start=str(d),end=str(d+timedelta(days=1)))
-        if h.empty: return ""
-        o,c=h.iloc[0]['Open'],h.iloc[0]['Close']; diff,p=(c-o),(c-o)/o*100
-        e="📈" if diff>0 else "📉" if diff<0 else "➡️"
-        return f"{e} {name}: {c:.2f} ({diff:+.2f},{p:+.2f}%)"
+        try:
+            h=yf.Ticker(code).history(start=str(ref),end=str(ref+timedelta(days=1)))
+            if h.empty: return ""
+            o,c=h.iloc[0]['Open'],h.iloc[0]['Close']; diff,p=(c-o),(c-o)/o*100
+            e="📈" if diff>0 else "📉" if diff<0 else "➡️"
+            return f"{e} {name}: {c:.2f} ({diff:+.2f},{p:+.2f}%)"
+        except Exception as e:
+            print("[US-ERR]", code, e)
+            return ""
     return ("📈 前一晚美股行情\n\n"
             + "\n".join(line(c,n) for n,c in idx.items()) + "\n"
             + "\n".join(line(c,n) for c,n in focus.items()))
 
-# ── 新增：即時美股開盤前行情 ─────────────────────────
-
+# ========== 即時美股開盤行情 ==========
 def us_open():
     tickers = {
         "道瓊": "^DJI",
@@ -264,48 +266,44 @@ def us_open():
         price = prev = None
         try:
             tkr   = yf.Ticker(code)
-            info  = tkr.fast_info or tkr.info        # fast_info 速度較快
+            info  = tkr.fast_info or tkr.info
             price = info.get("regularMarketPrice")
             prev  = info.get("previousClose")
-            # -------- fallback 取 1m K 線 ----------
             if price is None:
                 hist = tkr.history(period="1d", interval="1m")
                 if not hist.empty:
                     price = hist["Close"].iloc[-1]
                     prev  = hist["Close"].iloc[0]
-        except Exception:
-            pass
-
+        except Exception as e:
+            print("[USOPEN-ERR]", code, e)
         if price and prev:
             diff = price - prev
             pct  = diff / prev * 100
             emo  = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
             lines.append(f"{emo} {name}: {price:.2f} ({diff:+.2f},{pct:+.2f}%)")
-
     return "🇺🇸 美股開盤速報\n\n" + "\n".join(lines) if lines else "美股查詢失敗"
 
+# ========== LINE 推播 ==========
+def push(msg): line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=msg.strip()))
 
-
-# ───────── LINE Push ─────────
-def push(msg): line_bot_api.push_message(LINE_USER_ID,TextSendMessage(text=msg.strip()))
-
-# ───────── 排程任務 ─────────
+# ========== 排程任務 ==========
 def j0710():
-    now=datetime.now(tz)
+    now = datetime.now(tz)
     push(f"🌅 早安 {now:%Y-%m-%d (%a)}\n\n{weather('新北市新店區')}\n\n{news()}\n\n{cal()}\n\n{fx()}\n\n{us()}")
 
-def j0800(): push("🚌 通勤提醒\n\n"+traffic("家到公司")+"\n\n"+weather("台北市中山區"))
+def j0800():
+    push("🚌 通勤提醒\n\n"+traffic("家到公司")+"\n\n"+weather("台北市中山區"))
 
 def _tai(head):
-    lst=["大盤","台積電","聯電","鴻準","00918","00878","元大美債20年","群益25年美債","仁寶","陽明","華航","長榮航"]
+    lst = ["大盤","台積電","聯電","鴻準","00918","00878","元大美債20年","群益25年美債","仁寶","陽明","華航","長榮航"]
     push(head+"\n\n"+"\n".join(stock(s) for s in lst))
 
 def j0930(): _tai("📈 台股開盤")
 def j1200(): _tai("📊 台股盤中")
 def j1345(): _tai("🔚 台股收盤")
 
-def j1800():   # 依星期自動分流
-    wd=datetime.now(tz).weekday()
+def j1800():
+    wd = datetime.now(tz).weekday()
     if wd in (0,2,4):   # 一三五
         push("🏸 下班打球提醒（中正區）\n\n"+traffic("公司到中正區")+"\n\n"+weather("台北市中正區")+"\n\n"+oil())
     else:               # 二四
@@ -315,24 +313,24 @@ def j2130(): push(us_open())
 def j2300(): push("📊 美股行情更新\n\n"+us())
 def keep():  safe_get("https://example.com")
 
-# ───────── APScheduler ─────────
+# ========== APScheduler ==========
 sch=BackgroundScheduler(timezone="Asia/Taipei")
 sch.add_job(j0710 ,'cron',hour=7 ,minute=10)
 sch.add_job(j0800 ,'cron',hour=8 ,minute=0 ,day_of_week='mon-fri')
 sch.add_job(j0930 ,'cron',hour=9 ,minute=30,day_of_week='mon-fri')
 sch.add_job(j1200 ,'cron',hour=12,minute=0 ,day_of_week='mon-fri')
 sch.add_job(j1345 ,'cron',hour=13,minute=45,day_of_week='mon-fri')
-sch.add_job(j1800 ,'cron',hour=18,minute=00,day_of_week='mon-fri')
+sch.add_job(j1800 ,'cron',hour=18,minute=0 ,day_of_week='mon-fri')
 sch.add_job(j2130 ,'cron',hour=21,minute=30,day_of_week='mon-fri')
 sch.add_job(j2300 ,'cron',hour=23,minute=0 ,day_of_week='mon-fri')
 sch.add_job(keep  ,'cron',minute='0,10,20,30,40,50')
 sch.start()
 
-# ───────── Webhook / Health ─────────
-@app.route("/callback",methods=["POST"])
+# ========== Webhook / Health ==========
+@app.route("/callback", methods=["POST"])
 def callback():
     try:
-        handler.handle(request.get_data(as_text=True),request.headers.get("X-Line-Signature"))
+        handler.handle(request.get_data(as_text=True), request.headers.get("X-Line-Signature"))
     except InvalidSignatureError:
         abort(400)
     return "OK"
@@ -349,12 +347,8 @@ def test_stock():
 def health():
     return "OK"
 
-# ───────── 主程式 ─────────
+# ========== 主程式 ==========
 if __name__ == "__main__":
-    # ===== 臨時測試 =====
     print("[TEST] 台積電 =", stock("台積電"))
     print("[TEST] NVDA  =", stock("NVDA"))
-    # ====================
-
     app.run(host="0.0.0.0", port=10000)
-
