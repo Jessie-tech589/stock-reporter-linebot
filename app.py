@@ -371,10 +371,6 @@ def test_weather():
 def test_oil():
     return oil()
 
-@app.route("/test_fx")
-def test_fx():
-    return fx()
-
 @app.route("/test_stock")
 def test_stock():
     return stock("台積電")
