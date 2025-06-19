@@ -377,6 +377,31 @@ def test_stock():
 @app.route("/health")
 def health():
     return "OK"
+@app.route("/test_cwb")
+def test_cwb():
+    import requests
+    import urllib.parse
+
+    CWB_API_KEY = os.environ.get("CWB_API_KEY", "你的 CWA 金鑰")
+    location = "新店區"
+    location_encoded = urllib.parse.quote(location)
+
+    url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089?Authorization={CWB_API_KEY}&locationName={location_encoded}"
+
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            records = data.get("records", {})
+            locations = records.get("locations", [])
+            if locations:
+                return f"✅ OK！取得 {location} 資料成功"
+            else:
+                return f"⚠️ 沒有找到 {location} 的資料，請檢查 locationName"
+        else:
+            return f"❌ HTTP 錯誤：{resp.status_code}"
+    except Exception as e:
+        return f"❌ 例外錯誤：{str(e)}"
 
 # ========== 主程式 ==========
 if __name__ == "__main__":
