@@ -109,8 +109,6 @@ def news():
     return "\n".join("• "+t for t in arts) if arts else "今日無新聞"
 
 # ───────── 股票 ─────────
-print("[DEBUG-FUGLE] key =", 'FUGLE_API_KEY' in globals())
-
 
 def stock(name: str) -> str:
     """
@@ -312,4 +310,9 @@ def health():
 
 # ───────── 主程式 ─────────
 if __name__=="__main__":
+
+print("[TEST] 台積電 =", stock("台積電"))
+    print("[TEST] NVDA  =", stock("NVDA"))
+
+    
     app.run(host="0.0.0.0",port=10000)
