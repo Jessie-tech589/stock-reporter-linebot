@@ -51,35 +51,51 @@ def safe_get(url, timeout=10):
         return None
 
 # ========== 天氣 ==========
-CWB_API_KEY = os.getenv("CWB_API_KEY")  # 或直接寫你的key
+def get_weather_report():
+   
+    CWB_API_KEY = os.environ.get("CWB_API_KEY", "你的 CWB 金鑰")
 
-def weather(loc: str) -> str:
-    # 自動處理「台北市中正區」「新北市新店區」→「中正區」「新店區」
-    if "區" in loc:
-        loc = loc.split("區")[0][-2:] + "區"
-    url = (f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089"
-           f"?Authorization={CWB_API_KEY}&locationName={quote(loc)}")
-    r = requests.get(url)
-    print("[CWB-REQ]", url)
-    print("[CWB-RESP]", r.text[:600] if r else "NO RESP")  # print前600字以防太長
+    # 四區 locationId
+    location_ids = [
+        "F-D0047-069",  # 新店區
+        "F-D0047-063",  # 中正區
+        "F-D0047-061",  # 中山區
+        "F-D0047-075",  # 大安區
+    ]
+    location_param = ",".join(location_ids)
+
+    url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-093?Authorization={CWB_API_KEY}&locationId={location_param}"
+
     try:
-        d = r.json() if r else {}
-        locs = d.get("records", {}).get("locations", [])
-        # 先檢查資料
-        if not locs or not locs[0].get("location"):
-            return f"天氣查詢失敗（{loc}）"
-        info = locs[0]["location"][0]
-        # 氣象署格式 2024/11後都一樣
-        wx = info["weatherElement"][6]["time"][0]["elementValue"][0]["value"]
-        pop = info["weatherElement"][7]["time"][0]["elementValue"][0]["value"]
-        minT = info["weatherElement"][8]["time"][0]["elementValue"][0]["value"]
-        maxT = info["weatherElement"][12]["time"][0]["elementValue"][0]["value"]
-        return (f"🌦️ {info['locationName']}\n"
-                f"{wx}，降雨 {pop}%\n"
-                f"🌡️ {minT}～{maxT}°C")
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            locations = data.get("records", {}).get("locations", [])[0].get("location", [])
+            report_text = "【今日天氣預報】\n"
+
+            for loc in locations:
+                name = loc.get("locationName", "未知地區")
+                weather_elements = loc.get("weatherElement", [])
+                
+                weather_desc = ""
+                temp = ""
+                rain_prob = ""
+
+                for el in weather_elements:
+                    if el.get("elementName") == "WeatherDescription":
+                        weather_desc = el.get("time", [])[0].get("elementValue", [{}])[0].get("value", "")
+                    if el.get("elementName") == "Temperature":
+                        temp = el.get("time", [])[0].get("elementValue", [{}])[0].get("value", "")
+                    if el.get("elementName") == "PoP12h":  # 12小時降雨機率
+                        rain_prob = el.get("time", [])[0].get("elementValue", [{}])[0].get("value", "")
+
+                report_text += f"✅ {name}\n🌤 天氣：{weather_desc}\n🌡 溫度：{temp}°C\n☔ 降雨機率：{rain_prob}%\n\n"
+
+            return report_text
+        else:
+            return f"❌ 天氣 API 錯誤：{resp.status_code}"
     except Exception as e:
-        print("[CWB-WX-ERR]", e)
-        return f"天氣查詢失敗（{loc}）"
+        return f"❌ 天氣 API 例外錯誤：{str(e)}"
 
 # ========== 匯率 ==========
 def fx():
@@ -377,7 +393,7 @@ def test_stock():
 @app.route("/health")
 def health():
     return "OK"
-@app.route("/test_cwb")
+@app.route("/test_cwa")
 def test_cwb():
     import requests
     import urllib.parse
