@@ -113,14 +113,36 @@ def news():
 def stock(name: str) -> str:
     """
     兩層來源：
-      1. yfinance  (Yahoo；台美股皆可)
-      2. Fugle API (僅台股；需 FUGLE_API_KEY)
+      1. 台股 (.TW) ➜ 先 Fugle (需要 FUGLE_API_KEY)，失敗才用 Yahoo
+      2. 其它 ➜ 直接 Yahoo
     """
-    code = STOCK.get(name, name)           # 轉映射
-    # ── 第一層：yfinance ────────────────────────────
+    code = STOCK.get(name, name)
+
+    # ---------- 台股先走 Fugle ----------
+    if code.endswith(".TW") and FUGLE_API_KEY:
+        try:
+            sym = code[:-3]          # 2330.TW -> 2330
+            url = (
+                f"https://api.fugle.tw/marketdata/v1.0/intraday/quote/"
+                f"{sym}?apiToken={FUGLE_API_KEY}"
+            )
+            r = safe_get(url)
+            if r and r.status_code == 200:
+                quote = r.json().get("data", {}).get("quote")
+                if quote and quote.get("tradePrice"):
+                    price = quote["tradePrice"]
+                    prev  = quote["prevClose"]
+                    diff  = price - prev
+                    pct   = diff / prev * 100 if prev else 0
+                    emo   = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
+                    return f"{emo} {name}\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
+        except Exception as e:
+            print("[FUGLE-ERR]", code, e)  # 只在 log 顯示，不影響流程
+
+    # ---------- Yahoo (所有股票通用) ----------
     try:
-        tkr  = yf.Ticker(code)
-        info = getattr(tkr, "fast_info", {}) or tkr.info
+        tkr   = yf.Ticker(code)
+        info  = getattr(tkr, "fast_info", {}) or tkr.info
         price = info.get("regularMarketPrice")
         prev  = info.get("previousClose")
         if price and prev:
@@ -128,26 +150,11 @@ def stock(name: str) -> str:
             pct  = diff / prev * 100
             emo  = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
             return f"{emo} {name}\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
-    except Exception:
-        pass
-
-    # ── 第二層：Fugle（限 .TW 台股）─────────────────
-    if code.endswith(".TW") and FUGLE_API_KEY:
-        try:
-            sym  = code[:-3]                      # 去掉 .TW
-            url  = f"https://api.fugle.tw/marketdata/v1.0/intraday/quote/{sym}?apiToken={FUGLE_API_KEY}"
-            r    = safe_get(url)
-            data = r.json()["data"]["quote"] if r and r.json().get("data") else None
-            price = data["tradePrice"]
-            prev  = data["prevClose"]
-            diff  = price - prev
-            pct   = diff / prev * 100
-            emo   = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
-            return f"{emo} {name}\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
-        except Exception:
-            pass
+    except Exception as e:
+        print("[YF-ERR]", code, e)
 
     return f"❌ {name} 查無股價"
+
 
 
 # ───────── 行事曆 ─────────
@@ -313,12 +320,7 @@ def health():
     return "OK"
 
 # ───────── 主程式 ─────────
-# ───────── 主程式 ─────────
 if __name__ == "__main__":
-    # ===== 臨時測試 =====
-    print("[TEST] 台積電 =", stock("台積電"))
-    print("[TEST] NVDA  =", stock("NVDA"))
-    # ====================
-
+   
     app.run(host="0.0.0.0", port=10000)
 
