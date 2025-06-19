@@ -52,15 +52,22 @@ def safe_get(url, timeout=10):
 
 # ========== 天氣 ==========
 def weather(loc: str) -> str:
+    """
+    台灣地名自動加台灣後綴，提高命中率。
+    """
     def query(q):
         url = f"http://api.openweathermap.org/geo/1.0/direct?q={quote(q+',台灣')}&limit=1&appid={WEATHER_API_KEY}"
         r = safe_get(url)
         try:
             return r.json()[0] if r and r.json() else None
-        except: return None
-    geo = query(loc) or query(loc.replace("區","")) or query("台北市")
+        except Exception as e:
+            print("[WX-GEO-ERR]", q, e)
+            return None
+
+    geo = query(loc) or query(loc.replace("區", "")) or query("台北市")
     if not geo:
         return f"天氣查詢失敗（{loc}）"
+
     lat, lon = geo["lat"], geo["lon"]
     w = safe_get(f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&lang=zh_tw&units=metric")
     if not w:
@@ -235,7 +242,10 @@ def traffic(label):
 def us():
     idx = {"道瓊": ".DJI", "S&P500": ".INX", "NASDAQ": ".IXIC"}
     focus = {"NVDA":"輝達", "SMCI":"美超微", "GOOGL":"Google", "AAPL":"蘋果"}
+    lines = []
+    idx_miss = 0
     def q(code, name):
+        nonlocal idx_miss
         try:
             url = f"https://finnhub.io/api/v1/quote?symbol={code}&token={FINNHUB_API_KEY}"
             r = safe_get(url)
@@ -248,10 +258,14 @@ def us():
                 return f"{emo} {name}: {c:.2f} ({diff:+.2f},{pct:+.2f}%)"
         except Exception as e:
             print("[FINNHUB-ERR]", code, e)
+        idx_miss += 1
         return f"❌ {name}: 查無資料"
-    return ("📈 前一晚美股行情\n\n" +
-            "\n".join(q(c, n) for n, c in idx.items()) + "\n" +
-            "\n".join(q(c, n) for c, n in focus.items()))
+    idx_lines = [q(c, n) for n, c in idx.items()]
+    focus_lines = [q(c, n) for c, n in focus.items()]
+    # 如果三大指數全都查無資料
+    if idx_miss == len(idx):
+        return "📈 前一晚美股行情\n今日美股休市（或暫無行情）\n" + "\n".join(focus_lines)
+    return "📈 前一晚美股行情\n" + "\n".join(idx_lines) + "\n" + "\n".join(focus_lines)
 # ========== 即時美股開盤行情 ==========
 def us_open():
     tickers = {
@@ -344,7 +358,9 @@ def test_fx():
 @app.route("/test_us")
 def test_us():
     return us()
-
+@app.route("/test_weather")
+def test_weather():
+    return weather("新北市新店區")
 
 @app.route("/test_stock")
 def test_stock():
