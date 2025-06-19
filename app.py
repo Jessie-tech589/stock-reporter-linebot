@@ -109,6 +109,9 @@ def news():
     return "\n".join("• "+t for t in arts) if arts else "今日無新聞"
 
 # ───────── 股票 ─────────
+print("[DEBUG-FUGLE] key =", 'FUGLE_API_KEY' in globals())
+
+
 def stock(name: str) -> str:
     """
     兩層來源：
