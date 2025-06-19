@@ -60,11 +60,20 @@ def weather(loc: str) -> str:
         return r.json()[0] if r and r.json() else None
 
     geo = query(loc) or query(loc.replace("區","")) or query("台北市")
+    # ❶ ── DEBUG：印出地理編碼結果 ───────────────────────────
+    print("[WX-GEO]", loc, "→", geo)
+    # ───────────────────────────────────────────────────────
+    
     if not geo:
         return "天氣查詢失敗"
 
     lat, lon = geo["lat"], geo["lon"]
     w = safe_get(f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&lang=zh_tw&units=metric")
+    # ❷ ── DEBUG：印出 HTTP 狀態碼＋前 200 字 ────────────────
+    print("[WX-HTTP]", w.status_code if w else "None")
+    print("[WX-BODY]", (w.text[:200] + "...") if w else "no response")
+    # ───────────────────────────────────────────────────────
+    
     if not w:
         return "天氣查詢失敗"
     try:
