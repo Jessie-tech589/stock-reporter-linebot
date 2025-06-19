@@ -108,16 +108,45 @@ def news():
     return "\n".join("• "+t for t in arts) if arts else "今日無新聞"
 
 # ───────── 股票 ─────────
-def stock(name):
-    def q(c):
-        try: h=yf.Ticker(c).history(period="2d"); return h if not h.empty else None
-        except: return None
-    h=q(STOCK.get(name,name)) or q(name)
-    if h is None: return f"❌ {name} 查無股價"
-    td,yd=h.iloc[-1], h.iloc[-2] if len(h)>1 else h.iloc[-1]
-    p,diff=td['Close'], td['Close']-yd['Close']; pct=(diff/yd['Close']*100 if yd['Close'] else 0)
-    e="📈" if diff>0 else "📉" if diff<0 else "➡️"
-    return f"{e} {name}\n💰 {p:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
+def stock(name: str) -> str:
+    """
+    兩層來源：
+      1. yfinance  (Yahoo；台美股皆可)
+      2. Fugle API (僅台股；需 FUGLE_API_KEY)
+    """
+    code = STOCK.get(name, name)           # 轉映射
+    # ── 第一層：yfinance ────────────────────────────
+    try:
+        tkr  = yf.Ticker(code)
+        info = getattr(tkr, "fast_info", {}) or tkr.info
+        price = info.get("regularMarketPrice")
+        prev  = info.get("previousClose")
+        if price and prev:
+            diff = price - prev
+            pct  = diff / prev * 100
+            emo  = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
+            return f"{emo} {name}\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
+    except Exception:
+        pass
+
+    # ── 第二層：Fugle（限 .TW 台股）─────────────────
+    if code.endswith(".TW") and FUGLE_API_KEY:
+        try:
+            sym  = code[:-3]                      # 去掉 .TW
+            url  = f"https://api.fugle.tw/marketdata/v1.0/intraday/quote/{sym}?apiToken={FUGLE_API_KEY}"
+            r    = safe_get(url)
+            data = r.json()["data"]["quote"] if r and r.json().get("data") else None
+            price = data["tradePrice"]
+            prev  = data["prevClose"]
+            diff  = price - prev
+            pct   = diff / prev * 100
+            emo   = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
+            return f"{emo} {name}\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
+        except Exception:
+            pass
+
+    return f"❌ {name} 查無股價"
+
 
 # ───────── 行事曆 ─────────
 def cal():
