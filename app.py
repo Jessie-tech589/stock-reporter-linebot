@@ -311,8 +311,7 @@ def health():
 # ───────── 主程式 ─────────
 if __name__=="__main__":
 
-print("[TEST] 台積電 =", stock("台積電"))
+    print("[TEST] 台積電 =", stock("台積電"))
     print("[TEST] NVDA  =", stock("NVDA"))
-
     
     app.run(host="0.0.0.0",port=10000)
