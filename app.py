@@ -53,15 +53,10 @@ def safe_get(url, timeout=10):
 # ========== 天氣 ==========
 CWB_API_KEY = os.getenv("CWB_API_KEY")
 
-def safe_get(url, timeout=10):
-    import requests
-    try:
-        r = requests.get(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
-        return r if r.status_code == 200 else None
-    except Exception:
-        return None
-
 def weather(loc: str) -> str:
+    # 自動只取「區」名
+    if "區" in loc:
+        loc = loc.split("區")[0][-2:] + "區"
     url = (f"https://opendata.cwb.gov.tw/api/v1/rest/datastore/F-D0047-089"
            f"?Authorization={CWB_API_KEY}&locationName={quote(loc)}")
     r = safe_get(url)
@@ -71,13 +66,9 @@ def weather(loc: str) -> str:
         if not locs or not locs[0]["location"]:
             return f"天氣查詢失敗（{loc}）"
         info = locs[0]["location"][0]
-        # 天氣現象
         wx = info["weatherElement"][6]["time"][0]["elementValue"][0]["value"]
-        # 降雨機率
         pop = info["weatherElement"][7]["time"][0]["elementValue"][0]["value"]
-        # 最低溫
         minT = info["weatherElement"][8]["time"][0]["elementValue"][0]["value"]
-        # 最高溫
         maxT = info["weatherElement"][12]["time"][0]["elementValue"][0]["value"]
         return (f"🌦️ {loc}\n"
                 f"{wx}，降雨 {pop}%\n"
@@ -85,6 +76,7 @@ def weather(loc: str) -> str:
     except Exception as e:
         print("[CWB-WX-ERR]", e)
         return f"天氣查詢失敗（{loc}）"
+
 # ========== 匯率 ==========
 def fx():
     url = "https://rate.bot.com.tw/xrt?Lang=zh-TW"
@@ -368,7 +360,7 @@ def test_us():
     return us()
 @app.route("/test_weather")
 def test_weather():
-    return weather("新北市新店區")
+    return weather("新店區")
 
 @app.route("/test_oil")
 def test_oil():
