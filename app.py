@@ -51,26 +51,30 @@ def safe_get(url, timeout=10):
         return None
 
 # ========== 天氣 ==========
-CWB_API_KEY = os.getenv("CWB_API_KEY")
+CWB_API_KEY = os.getenv("CWB_API_KEY")  # 或直接寫你的key
 
 def weather(loc: str) -> str:
-    # 自動只取「區」名
+    # 自動處理「台北市中正區」「新北市新店區」→「中正區」「新店區」
     if "區" in loc:
         loc = loc.split("區")[0][-2:] + "區"
     url = (f"https://opendata.cwb.gov.tw/api/v1/rest/datastore/F-D0047-089"
            f"?Authorization={CWB_API_KEY}&locationName={quote(loc)}")
-    r = safe_get(url)
+    r = requests.get(url)
+    print("[CWB-REQ]", url)
+    print("[CWB-RESP]", r.text[:600] if r else "NO RESP")  # print前600字以防太長
     try:
         d = r.json() if r else {}
         locs = d.get("records", {}).get("locations", [])
-        if not locs or not locs[0]["location"]:
+        # 先檢查資料
+        if not locs or not locs[0].get("location"):
             return f"天氣查詢失敗（{loc}）"
         info = locs[0]["location"][0]
+        # 氣象署格式 2024/11後都一樣
         wx = info["weatherElement"][6]["time"][0]["elementValue"][0]["value"]
         pop = info["weatherElement"][7]["time"][0]["elementValue"][0]["value"]
         minT = info["weatherElement"][8]["time"][0]["elementValue"][0]["value"]
         maxT = info["weatherElement"][12]["time"][0]["elementValue"][0]["value"]
-        return (f"🌦️ {loc}\n"
+        return (f"🌦️ {info['locationName']}\n"
                 f"{wx}，降雨 {pop}%\n"
                 f"🌡️ {minT}～{maxT}°C")
     except Exception as e:
