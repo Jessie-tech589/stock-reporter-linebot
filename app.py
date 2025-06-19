@@ -57,7 +57,7 @@ def weather(loc: str) -> str:
     # 自動處理「台北市中正區」「新北市新店區」→「中正區」「新店區」
     if "區" in loc:
         loc = loc.split("區")[0][-2:] + "區"
-    url = (f"https://opendata.cwb.gov.tw/api/v1/rest/datastore/F-D0047-089"
+    url = (f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089"
            f"?Authorization={CWB_API_KEY}&locationName={quote(loc)}")
     r = requests.get(url)
     print("[CWB-REQ]", url)
