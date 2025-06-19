@@ -339,6 +339,11 @@ def callback():
 def home():
     return "✅ LINE Bot 正常運作中"
 
+@app.route("/test_fx")
+def test_fx():
+    return fx()
+
+
 @app.route("/test_stock")
 def test_stock():
     return stock("台積電")
