@@ -233,31 +233,31 @@ def traffic(label):
 
 # ========== 美股前一晚摘要 ==========
 def us():
-    us_tz = pytz.timezone("US/Eastern")
-    today = datetime.now(us_tz).date()
-    ref = today - timedelta(days=3 if today.weekday()==0 else 1)
-    idx={"道瓊":"^DJI","S&P500":"^GSPC","NASDAQ":"^IXIC"}
-    focus={"NVDA":"輝達","SMCI":"美超微","GOOGL":"Google","AAPL":"蘋果"}
-    def line(code,name):
+    idx = {"道瓊": ".DJI", "S&P500": ".INX", "NASDAQ": ".IXIC"}
+    focus = {"NVDA":"輝達", "SMCI":"美超微", "GOOGL":"Google", "AAPL":"蘋果"}
+    def q(code, name):
         try:
-            h=yf.Ticker(code).history(start=str(ref),end=str(ref+timedelta(days=1)))
-            if h.empty: return ""
-            o,c=h.iloc[0]['Open'],h.iloc[0]['Close']; diff,p=(c-o),(c-o)/o*100
-            e="📈" if diff>0 else "📉" if diff<0 else "➡️"
-            return f"{e} {name}: {c:.2f} ({diff:+.2f},{p:+.2f}%)"
+            url = f"https://finnhub.io/api/v1/quote?symbol={code}&token={FINNHUB_API_KEY}"
+            r = safe_get(url)
+            data = r.json() if r else {}
+            c = data.get("c"); pc = data.get("pc")
+            if c and pc:
+                diff = c - pc
+                pct = diff / pc * 100 if pc else 0
+                emo = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
+                return f"{emo} {name}: {c:.2f} ({diff:+.2f},{pct:+.2f}%)"
         except Exception as e:
-            print("[US-ERR]", code, e)
-            return ""
-    return ("📈 前一晚美股行情\n\n"
-            + "\n".join(line(c,n) for n,c in idx.items()) + "\n"
-            + "\n".join(line(c,n) for c,n in focus.items()))
-
+            print("[FINNHUB-ERR]", code, e)
+        return f"❌ {name}: 查無資料"
+    return ("📈 前一晚美股行情\n\n" +
+            "\n".join(q(c, n) for n, c in idx.items()) + "\n" +
+            "\n".join(q(c, n) for c, n in focus.items()))
 # ========== 即時美股開盤行情 ==========
 def us_open():
     tickers = {
-        "道瓊": "^DJI",
-        "S&P500": "^GSPC",
-        "NASDAQ": "^IXIC",
+        "道瓊": ".DJI",
+        "S&P500": ".INX",
+        "NASDAQ": ".IXIC",
         "NVDA": "NVDA",
         "SMCI": "SMCI",
         "GOOGL": "GOOGL",
@@ -265,24 +265,21 @@ def us_open():
     }
     lines = []
     for name, code in tickers.items():
-        price = prev = None
         try:
-            tkr   = yf.Ticker(code)
-            info  = tkr.fast_info or tkr.info
-            price = info.get("regularMarketPrice")
-            prev  = info.get("previousClose")
-            if price is None:
-                hist = tkr.history(period="1d", interval="1m")
-                if not hist.empty:
-                    price = hist["Close"].iloc[-1]
-                    prev  = hist["Close"].iloc[0]
+            url = f"https://finnhub.io/api/v1/quote?symbol={code}&token={FINNHUB_API_KEY}"
+            r = safe_get(url)
+            data = r.json() if r else {}
+            c = data.get("c"); pc = data.get("pc")
+            if c and pc:
+                diff = c - pc
+                pct = diff / pc * 100 if pc else 0
+                emo = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
+                lines.append(f"{emo} {name}: {c:.2f} ({diff:+.2f},{pct:+.2f}%)")
+            else:
+                lines.append(f"❌ {name}: 查無資料")
         except Exception as e:
-            print("[USOPEN-ERR]", code, e)
-        if price and prev:
-            diff = price - prev
-            pct  = diff / prev * 100
-            emo  = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
-            lines.append(f"{emo} {name}: {price:.2f} ({diff:+.2f},{pct:+.2f}%)")
+            print("[FINNHUB-ERR]", code, e)
+            lines.append(f"❌ {name}: 查詢失敗")
     return "🇺🇸 美股開盤速報\n\n" + "\n".join(lines) if lines else "美股查詢失敗"
 
 # ========== LINE 推播 ==========
