@@ -51,39 +51,39 @@ def safe_get(url, timeout=10):
         return None
 
 # ========== 天氣 ==========
-def weather(loc: str) -> str:
-    """
-    台灣地名自動加台灣後綴，提高命中率。
-    """
-    def query(q):
-        url = f"http://api.openweathermap.org/geo/1.0/direct?q={quote(q+',台灣')}&limit=1&appid={WEATHER_API_KEY}"
-        r = safe_get(url)
-        try:
-            return r.json()[0] if r and r.json() else None
-        except Exception as e:
-            print("[WX-GEO-ERR]", q, e)
-            return None
+CWB_API_KEY = os.getenv("CWB_API_KEY")
 
-    geo = query(loc) or query(loc.replace("區", "")) or query("台北市")
-    if not geo:
-        return f"天氣查詢失敗（{loc}）"
-
-    lat, lon = geo["lat"], geo["lon"]
-    w = safe_get(f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&lang=zh_tw&units=metric")
-    if not w:
-        return "天氣查詢失敗"
+def safe_get(url, timeout=10):
+    import requests
     try:
-        d = w.json()
-        t, desc = d["main"]["temp"], d["weather"][0]["description"]
-        hum, ws = d["main"]["humidity"], d["wind"]["speed"]
-        return f"🌤️ {loc} {desc}\n🌡️{t}°C 💧{hum}% 💨{ws}m/s"
-    except Exception as e:
-        print("[WX-ERR]", e)
-        return "天氣查詢失敗"
+        r = requests.get(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
+        return r if r.status_code == 200 else None
+    except Exception:
+        return None
 
+def weather(loc: str) -> str:
+    url = (f"https://opendata.cwb.gov.tw/api/v1/rest/datastore/F-C0032-001"
+           f"?Authorization={CWB_API_KEY}&locationName={quote(loc)}")
+    r = safe_get(url)
+    try:
+        d = r.json() if r else {}
+        locs = d.get("records", {}).get("location", [])
+        if not locs:
+            return f"天氣查詢失敗（{loc}）"
+        info = locs[0]
+        w = info["weatherElement"]
+        wx = w[0]["time"][0]["parameter"]["parameterName"]
+        pop = w[1]["time"][0]["parameter"]["parameterName"]
+        minT = w[2]["time"][0]["parameter"]["parameterName"]
+        maxT = w[4]["time"][0]["parameter"]["parameterName"]
+        return (f"🌦️ {loc}\n"
+                f"{wx}，降雨 {pop}%\n"
+                f"🌡️ {minT}～{maxT}°C")
+    except Exception as e:
+        print("[CWB-WX-ERR]", e)
+        return f"天氣查詢失敗（{loc}）"
 # ========== 匯率 ==========
 def fx():
-    # 台銀匯率表網址
     url = "https://rate.bot.com.tw/xrt?Lang=zh-TW"
     r = safe_get(url)
     if not r:
@@ -99,14 +99,19 @@ def fx():
             "人民幣 (CNY)": "CNY",
             "港幣 (HKD)": "HKD",
         }
+        flag = {
+            "USD": "🇺🇸",
+            "JPY": "🇯🇵",
+            "CNY": "🇨🇳",
+            "HKD": "🇭🇰"
+        }
         for row in rows:
             cells = row.find_all("td")
             if len(cells) > 0:
                 name = cells[0].text.strip()
                 if name in mapping:
                     rate = cells[2].text.strip()  # 本行現金賣出
-                    flag = {"USD":"🇺🇸", "JPY":"🇯🇵", "CNY":"🇨🇳", "HKD":"🇭🇰"}[mapping[name]]
-                    result.append(f"{flag} {mapping[name]}：{rate}")
+                    result.append(f"{flag[mapping[name]]} {mapping[name]}：{rate}")
         return "💱 今日匯率（現金賣出）\n" + "\n".join(result) if result else "查無匯率資料"
     except Exception as e:
         print("[FX-ERR]", e)
@@ -361,6 +366,14 @@ def test_us():
 @app.route("/test_weather")
 def test_weather():
     return weather("新北市新店區")
+
+@app.route("/test_oil")
+def test_oil():
+    return oil()
+
+@app.route("/test_fx")
+def test_fx():
+    return fx()
 
 @app.route("/test_stock")
 def test_stock():
