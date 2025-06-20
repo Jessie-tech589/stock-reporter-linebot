@@ -394,8 +394,10 @@ def test_us():
 
 @app.route("/test_weather", methods=["GET"])
 def test_weather():
-    loc = request.args.get("loc", "新北市新店區")  # 可帶「新店」、「新店區」、「中山」等
-    return weather(loc)
+    loc = request.args.get("loc", "新北市新店區")
+    data = weather(loc)
+    print("[test_weather]", data)
+    return data
 
 @app.route("/test_oil")
 def test_oil():
