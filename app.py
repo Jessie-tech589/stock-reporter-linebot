@@ -53,30 +53,34 @@ def safe_get(url, timeout=10):
 
 # ========== 天氣 ==========
 def weather(loc: str) -> str:
+    import requests
     from urllib.parse import quote
 
     url = (
         f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089"
-        f"?Authorization={CWA_API_KEY}&locationName={quote(loc)}"
+        f"?Authorization={os.getenv('CWA_API_KEY')}&locationName={quote(loc)}"
     )
     try:
         r = requests.get(url, timeout=10)
         data = r.json() if r and r.status_code == 200 else {}
-        locations = data.get("records", {}).get("locations", [])
-        for city in locations:
-            for area in city.get("location", []):
-                if area.get("locationName") == loc:
-                    wx = area["weatherElement"][6]["time"][0]["elementValue"][0]["value"]
-                    pop = area["weatherElement"][7]["time"][0]["elementValue"][0]["value"]
-                    minT = area["weatherElement"][8]["time"][0]["elementValue"][0]["value"]
-                    maxT = area["weatherElement"][12]["time"][0]["elementValue"][0]["value"]
-                    return (f"🌦️ {loc}\n"
-                            f"{wx}，降雨 {pop}%\n"
-                            f"🌡️ {minT}～{maxT}°C")
-        return f"天氣查詢失敗（{loc}）"
+        # --- debug: 輸出回傳資料 ---
+        print("[CWA DATA]", json.dumps(data, ensure_ascii=False)[:800])  # 只印前800字防爆
+        # --- end debug ---
+        locs = data.get("records", {}).get("locations", [])
+        if not locs or not locs[0].get("location"):
+            return f"天氣查詢失敗（{loc}）"
+        info = locs[0]["location"][0]
+        wx = info["weatherElement"][6]["time"][0]["elementValue"][0]["value"]
+        pop = info["weatherElement"][7]["time"][0]["elementValue"][0]["value"]
+        minT = info["weatherElement"][8]["time"][0]["elementValue"][0]["value"]
+        maxT = info["weatherElement"][12]["time"][0]["elementValue"][0]["value"]
+        return (f"🌦️ {loc}\n"
+                f"{wx}，降雨 {pop}%\n"
+                f"🌡️ {minT}～{maxT}°C")
     except Exception as e:
         print("[CWA-WX-ERR]", e)
         return f"天氣查詢失敗（{loc}）"
+
 
 
 
