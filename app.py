@@ -172,21 +172,21 @@ def news():
 # ========== 股票 ==========
 def stock(name: str) -> str:
     code = STOCK.get(name, name)
-    # 台股（證交所 OpenAPI）
+    # 台股
     if code.endswith(".TW"):
-        sym = code.replace(".TW", "").zfill(4)
+        sym = code.replace(".TW", "").zfill(4)   # 這樣 sym="2330"
         url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_AVG_ALL"
         r = safe_get(url)
         data = r.json() if r else []
         for row in data:
-            if row.get('證券代號') == sym:
+            if row.get('證券代號') == sym:      # 這裡一定是 4 碼數字比對
                 price = row.get('收盤價')
                 if price and price != '--':
                     return f"📈 {name}（台股）\n💰 {price}（收盤價）"
                 else:
                     return f"❌ {name}（台股） 查無今日收盤價"
         return f"❌ {name}（台股） 查無代號"
-    # 美股與其它（Yahoo/yfinance）
+    # 美股
     try:
         tkr = yf.Ticker(code)
         info = getattr(tkr, "fast_info", {}) or tkr.info
