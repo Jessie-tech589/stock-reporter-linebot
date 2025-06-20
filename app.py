@@ -151,49 +151,45 @@ def news():
 # ========== 股票 ==========
 def stock(name: str) -> str:
     code = STOCK.get(name, name)
-    # Fugle 與 TWSE fallback 全部註解
-    """
+    # 台股（Fugle）
     if code.endswith(".TW") and FUGLE_API_KEY:
         sym = code.replace(".TW", "")
         try:
             url = f"https://api.fugle.tw/marketdata/v1.0/intraday/quote/{sym}?apiToken={FUGLE_API_KEY}"
-            r = safe_get(url)
-            dq = r.json().get("data", {}).get("quote") if r else None
+            r = requests.get(url, timeout=10)
+            dq = r.json().get("data", {}).get("quote") if r.status_code == 200 else None
             price = dq.get("tradePrice") if dq else None
-            prev  = dq.get("prevClose")  if dq else None
+            prev = dq.get("prevClose") if dq else None
             if price and prev:
                 diff = price - prev
-                pct  = diff / prev * 100 if prev else 0
-                emo  = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
-                return f"{emo} {name}\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
+                pct = diff / prev * 100 if prev else 0
+                emo = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
+                return f"{emo} {name} ({code})\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
+            else:
+                return f"❌ {name}（台股）查無資料"
         except Exception as e:
             print("[FUGLE-ERR]", code, e)
-        # fallback TWSE openapi
+            return f"❌ {name}（台股）查無資料"
+    # 美股（Finnhub）
+    elif code.isalpha() and FINNHUB_API_KEY:
         try:
-            url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_AVG_ALL"
-            r = safe_get(url)
-            data = r.json() if r else []
-            for row in data:
-                if row.get('證券代號') == sym.zfill(4):
-                    price = float(row['收盤價'])
-                    return f"➡️ {name}\n💰 {price:.2f}\n(僅收盤價)"
+            url = f"https://finnhub.io/api/v1/quote?symbol={code}&token={FINNHUB_API_KEY}"
+            r = requests.get(url, timeout=10)
+            data = r.json() if r.status_code == 200 else {}
+            c = data.get("c"); pc = data.get("pc")
+            if c and pc:
+                diff = c - pc
+                pct = diff / pc * 100 if pc else 0
+                emo = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
+                return f"{emo} {name} ({code})\n💰 {c:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
+            else:
+                return f"❌ {name}（美股）查無資料"
         except Exception as e:
-            print("[TWSE-ERR]", code, e)
-    """
-    # 只留 Yahoo/yfinance 查詢
-    try:
-        tkr = yf.Ticker(code)
-        info = getattr(tkr, "fast_info", {}) or tkr.info
-        price = info.get("regularMarketPrice")
-        prev  = info.get("previousClose")
-        if price and prev:
-            diff = price - prev
-            pct  = diff / prev * 100
-            emo  = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
-            return f"{emo} {name}\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
-    except Exception as e:
-        print("[YF-ERR]", code, e)
+            print("[FINNHUB-ERR]", code, e)
+            return f"❌ {name}（美股）查無資料"
+    # 其它
     return f"❌ {name} 查無股價"
+
 
 # ========== 行事曆 ==========
 def cal():
