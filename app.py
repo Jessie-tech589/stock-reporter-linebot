@@ -53,28 +53,33 @@ def safe_get(url, timeout=10):
 
 # ========== 天氣 ==========
 def weather(loc: str) -> str:
-    # 建議手動直接傳正確地名 "新北市新店"
+    import requests
+    from urllib.parse import quote
+
+    # 地名只用區名，不加縣市，避免查不到
+    loc = loc.replace("新北市", "").replace("台北市", "").replace("市", "")
     url = (
         f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089"
-        f"?Authorization={CWA_API_KEY}&locationName={quote(loc)}"
+        f"?Authorization={os.getenv('CWA_API_KEY')}&locationName={quote(loc)}"
     )
-    r = safe_get(url)
     try:
-        data = r.json() if r else {}
+        r = requests.get(url, timeout=10)
+        data = r.json() if r and r.status_code == 200 else {}
         locs = data.get("records", {}).get("locations", [])
         if not locs or not locs[0].get("location"):
             return f"天氣查詢失敗（{loc}）"
         info = locs[0]["location"][0]
-        wx = info["weatherElement"][6]["time"][0]["elementValue"][0]["value"]  # 天氣現象
-        pop = info["weatherElement"][7]["time"][0]["elementValue"][0]["value"]  # 降雨機率
-        minT = info["weatherElement"][8]["time"][0]["elementValue"][0]["value"]  # 最低溫
-        maxT = info["weatherElement"][12]["time"][0]["elementValue"][0]["value"] # 最高溫
+        wx = info["weatherElement"][6]["time"][0]["elementValue"][0]["value"]
+        pop = info["weatherElement"][7]["time"][0]["elementValue"][0]["value"]
+        minT = info["weatherElement"][8]["time"][0]["elementValue"][0]["value"]
+        maxT = info["weatherElement"][12]["time"][0]["elementValue"][0]["value"]
         return (f"🌦️ {loc}\n"
                 f"{wx}，降雨 {pop}%\n"
                 f"🌡️ {minT}～{maxT}°C")
     except Exception as e:
         print("[CWA-WX-ERR]", e)
         return f"天氣查詢失敗（{loc}）"
+
 
 
 # ========== 匯率 ==========
