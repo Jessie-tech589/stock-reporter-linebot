@@ -151,36 +151,33 @@ def news():
 # ========== 股票 ==========
 def stock(name: str) -> str:
     code = STOCK.get(name, name)
-    # 台股查詢（證交所 OpenAPI，不需API KEY）
-    if code.endswith(("TW", "tw")) or code.isdigit() or re.match(r'^\d', code):
-        try:
-            url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_AVG_ALL"
-            data = requests.get(url, timeout=10).json()
-            code4 = code.zfill(4)
+    # 台股查詢
+    if code.endswith(".TW"):
+        sym = code.replace(".TW", "").zfill(4)
+        url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_AVG_ALL"
+        r = requests.get(url, timeout=10, headers={"User-Agent":"Mozilla/5.0"})
+        if r.status_code == 200:
+            data = r.json()
             for row in data:
-                if row.get('證券代號') == code4:
-                    price = float(row['收盤價'])
-                    return f"➡️ {name}（台股）\n💰 {price:.2f}\n(僅收盤價)"
-            return f"❌ {name}（台股）查無資料"
-        except Exception as e:
-            print("[TWSE-ERR]", code, e)
-            return f"❌ {name}（台股）查詢失敗"
-    # 美股查詢（Yahoo/yfinance）
-    try:
+                if row.get('證券代號') == sym:
+                    price = row.get('收盤價')
+                    if price and price != "--":
+                        return f"📈 {name}（台股）\n💰 {price}\n(僅收盤價)"
+                    else:
+                        return f"❌ {name}（台股） 查無資料"
+        return f"❌ {name}（台股） 查無資料"
+    # 美股查詢
+    else:
         tkr = yf.Ticker(code)
         info = getattr(tkr, "fast_info", {}) or tkr.info
         price = info.get("regularMarketPrice")
         prev  = info.get("previousClose")
-        if price and prev:
+        if price is not None and prev is not None:
             diff = price - prev
-            pct  = diff / prev * 100
+            pct  = diff / prev * 100 if prev else 0
             emo  = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
             return f"{emo} {name}（美股）\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
-        else:
-            return f"❌ {name}（美股）查無資料"
-    except Exception as e:
-        print("[YF-ERR]", code, e)
-        return f"❌ {name}（美股）查詢失敗"
+        return f"❌ {name}（美股） 查無資料"
 
 
 # ========== 行事曆 ==========
