@@ -131,7 +131,7 @@ def fx():
 
 # ========== 油價 ==========
 def oil():
-"""
+    """
     查詢台灣中油今日油價（92、95、98、超柴）。
     """
     url = "https://www.cpc.com.tw/historyprice.aspx?n=2890"
