@@ -25,6 +25,7 @@ GOOGLE_CREDS_JSON_B64    = os.getenv("GOOGLE_CREDS_JSON")
 GOOGLE_CALENDAR_ID       = os.getenv("GOOGLE_CALENDAR_ID","primary")
 FUGLE_API_KEY            = os.getenv("FUGLE_API_KEY")
 FINNHUB_API_KEY          = os.getenv("FINNHUB_API_KEY")
+CWA_API_KEY              = os.getenv("CWA_API_KEY")
 
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
@@ -52,14 +53,10 @@ def safe_get(url, timeout=10):
 
 # ========== 天氣 ==========
 def weather(loc: str) -> str:
-    # 將「區」字尾去除才是 API 的 LocationName，例如「新北市新店區」→「新北市新店」
-    if loc.endswith("區") or loc.endswith("市") or loc.endswith("鄉") or loc.endswith("鎮"):
-        loc_query = loc[:-1]
-    else:
-        loc_query = loc
+    # 建議手動直接傳正確地名 "新北市新店"
     url = (
         f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089"
-        f"?Authorization={CWA_API_KEY}&locationName={quote(loc_query)}"
+        f"?Authorization={CWA_API_KEY}&locationName={quote(loc)}"
     )
     r = safe_get(url)
     try:
@@ -154,7 +151,8 @@ def news():
 # ========== 股票 ==========
 def stock(name: str) -> str:
     code = STOCK.get(name, name)
-    # 台股 .TW 先用 Fugle, fallback TWSE, 最後 Yahoo
+    # Fugle 與 TWSE fallback 全部註解
+    """
     if code.endswith(".TW") and FUGLE_API_KEY:
         sym = code.replace(".TW", "")
         try:
@@ -181,7 +179,8 @@ def stock(name: str) -> str:
                     return f"➡️ {name}\n💰 {price:.2f}\n(僅收盤價)"
         except Exception as e:
             print("[TWSE-ERR]", code, e)
-    # 其它用 Yahoo (如美股)
+    """
+    # 只留 Yahoo/yfinance 查詢
     try:
         tkr = yf.Ticker(code)
         info = getattr(tkr, "fast_info", {}) or tkr.info
@@ -303,10 +302,24 @@ def us_open():
 def push(msg): line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=msg.strip()))
 
 # ========== 排程任務 ==========
+def safe_run(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except Exception as e:
+        return f"{fn.__name__} 查詢失敗"
+
 def j0710():
     now = datetime.now(tz)
-    push(f"🌅 早安 {now:%Y-%m-%d (%a)}\n\n{weather('新北市新店區')}\n\n{news()}\n\n{cal()}\n\n{fx()}\n\n{us()}")
-
+    msg = (
+        f"🌅 早安 {now:%Y-%m-%d (%a)}\n\n"
+        f"{safe_run(weather, '新北市新店')}\n\n"
+        f"{safe_run(news)}\n\n"
+        f"{safe_run(cal)}\n\n"
+        f"{safe_run(fx)}\n\n"
+        f"{safe_run(us)}"
+    )
+    push(msg)
+    
 def j0800():
     push("🚌 通勤提醒\n\n"+traffic("家到公司")+"\n\n"+weather("台北市中山區"))
 
