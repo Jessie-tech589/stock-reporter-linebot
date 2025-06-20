@@ -144,22 +144,28 @@ def oil():
     return "油價查詢失敗"
 
 # ========== 新聞 ==========
-def news_all():
-    keys = [
-        ('台灣', 'tw'),
-        ('中國', 'cn'),
-        ('美國', 'us'),
+def news():
+    """
+    NewsAPI 抓 台灣、大陸、國際重大新聞 各三則，合併成一串
+    """
+    sources = [
+        ("台灣", "tw"),
+        ("中國", "cn"),
+        ("國際", "us"),  # 你也可改 gb、jp、fr...
     ]
     result = []
-    for label, code in keys:
+    for label, code in sources:
         url = f"https://newsapi.org/v2/top-headlines?country={code}&apiKey={NEWS_API_KEY}"
         r = safe_get(url)
-        if r:
-            data = r.json()
-            arts = [a["title"] for a in data.get("articles", []) if a.get("title")] [:3]
-            for title in arts:
-                result.append(f"【{label}】{title}")
-    return "\n".join(result) if result else "今日無新聞"
+        try:
+            data = r.json() if r else {}
+            if data.get("status") == "ok":
+                arts = [a["title"] for a in data.get("articles", []) if a.get("title")] [:3]
+                if arts:
+                    result.append(f"【{label}】" + "\n" + "\n".join("• " + t for t in arts))
+        except Exception as e:
+            print(f"[NEWS-{label}-ERR]", e)
+    return "\n\n".join(result) if result else "今日無新聞"
 
 
 
