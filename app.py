@@ -27,9 +27,24 @@ FUGLE_API_KEY            = os.getenv("FUGLE_API_KEY")
 FINNHUB_API_KEY          = os.getenv("FINNHUB_API_KEY")
 CWA_API_KEY              = os.getenv("CWA_API_KEY")
 
-
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler      = WebhookHandler(LINE_CHANNEL_SECRET)
+
+# ========== 地區對應表 ==========
+DISTRICT_CITY = {
+    "新店":"新北市","新店區":"新北市",
+    "中山":"台北市","中山區":"台北市",
+    "大安":"台北市","大安區":"台北市",
+    "中正":"台北市","中正區":"台北市",
+    "大同":"台北市","大同區":"台北市",
+    "松山":"台北市","松山區":"台北市",
+    "信義":"台北市","信義區":"台北市",
+    "南港":"台北市","南港區":"台北市",
+    "內湖":"台北市","內湖區":"台北市",
+    "文山":"台北市","文山區":"台北市",
+    "萬華":"台北市","萬華區":"台北市",
+    # 你可自行補齊新北市、台中市、桃園市等
+}
 
 # ========== STOCK MAPPING =============
 STOCK = {
@@ -52,26 +67,23 @@ def safe_get(url, timeout=10):
         return None
 
 # ========== 天氣 ==========
-
 def weather(loc: str) -> str:
     """
-    以「區名」查詢中央氣象署 F-D0047-089 API 天氣（未來24小時預報）
+    以「區名」查中央氣象署 F-D0047-089 API 天氣（未來24小時）
     例：新店區、中山區、大安區
     """
     if not CWA_API_KEY:
         return "【系統未設定CWA_API_KEY】"
-    loc = loc.strip()
-    # 自動補全
-    city = DISTRICT_CITY.get(loc)
+    loc = loc.strip().replace("台北市", "").replace("新北市", "").replace("區","")  # 只留區名
+    city = DISTRICT_CITY.get(loc+"區") or DISTRICT_CITY.get(loc) or ""
     if city:
-        search = f"{city}{loc}"
+        search = f"{city}{loc}區"
     else:
         search = loc
     url = (
         f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089"
         f"?Authorization={CWA_API_KEY}&locationName={quote(search)}"
     )
-    print(f"[CWA-DEBUG] 查詢地名: {search}  API_KEY: {'有' if CWA_API_KEY else '無'}")
     try:
         r = requests.get(url, timeout=10)
         if r.status_code != 200:
@@ -85,13 +97,12 @@ def weather(loc: str) -> str:
         pop  = info["weatherElement"][7]["time"][0]["elementValue"][0]["value"]
         minT = info["weatherElement"][8]["time"][0]["elementValue"][0]["value"]
         maxT = info["weatherElement"][12]["time"][0]["elementValue"][0]["value"]
-        return (f"🌦️ {loc}\n"
+        return (f"🌦️ {search}\n"
                 f"{wx}，降雨 {pop}%\n"
                 f"🌡️ {minT}～{maxT}°C")
     except Exception as e:
         print("[CWA-WX-ERR]", e)
-        return f"天氣查詢失敗（{loc}）"   
-   
+        return f"天氣查詢失敗（{loc}）"
 
 # ========== 匯率 ==========
 def fx():
@@ -128,18 +139,15 @@ def fx():
         print("[FX-ERR]", e)
         return "匯率查詢失敗"
 
-
 # ========== 油價 ==========
 def get_taiwan_oil_price():
     url = "https://www2.moeaea.gov.tw/oil111/Gasoline/NationwideAvg"
     try:
         r = requests.get(url, timeout=10)
         data = r.json()
-        # 解析 JSON 內容
         lst = data.get('nationwideAvgList', [])
         if not lst:
             return "油價查詢失敗（無資料）"
-        # 取最新一筆
         today = lst[0]
         return (
             f"⛽ 本週油價（{today['announceDate']}）\n"
@@ -154,13 +162,10 @@ def get_taiwan_oil_price():
 
 # ========== 新聞 ==========
 def news():
-    """
-    NewsAPI 抓 台灣、大陸、國際重大新聞 各三則，合併成一串
-    """
     sources = [
         ("台灣", "tw"),
         ("中國", "cn"),
-        ("國際", "us"),  # 你也可改 gb、jp、fr...
+        ("國際", "us"),
     ]
     result = []
     for label, code in sources:
@@ -176,19 +181,17 @@ def news():
             print(f"[NEWS-{label}-ERR]", e)
     return "\n\n".join(result) if result else "今日無新聞"
 
-
-
 # ========== 股票 ==========
 def stock(name: str) -> str:
     code = STOCK.get(name, name)
     # 台股
     if code.endswith(".TW"):
-        sym = code.replace(".TW", "").zfill(4)   # 這樣 sym="2330"
+        sym = code.replace(".TW", "").zfill(4)
         url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_AVG_ALL"
         r = safe_get(url)
         data = r.json() if r else []
         for row in data:
-            if row.get('證券代號') == sym:      # 這裡一定是 4 碼數字比對
+            if row.get('證券代號') == sym:
                 price = row.get('收盤價')
                 if price and price != '--':
                     return f"📈 {name}（台股）\n💰 {price}（收盤價）"
@@ -233,7 +236,7 @@ def traffic(label):
     cfg={
       "家到公司":dict(
         o="新北市新店區建國路99巷",d="台北市中山區南京東路三段131號",
-        wp=["新北市新店區民族路","新北市北新路","台北市羅斯福路","台北市基隆路",
+        wp=["新北市新店區民族路","新北市新店區北新路","台北市羅斯福路","台北市基隆路",
             "台北市辛亥路","台北市復興南路","台北市南京東路"],
         sum="建國路→民族路→北新路→羅斯福→基隆→辛亥→復興南→南京東"),
       "公司到中正區":dict(
@@ -243,7 +246,7 @@ def traffic(label):
       "公司到新店區":dict(
         o="台北市中山區南京東路三段131號",d="新北市新店區建國路99巷",
         wp=["台北市復興南路","台北市辛亥路","台北市基隆路","台北市羅斯福路",
-            "新北市北新路","新北市民族路"],
+            "新北市新店區北新路","新北市新店區民族路"],
         sum="南京東→復興南→辛亥→基隆→羅斯福→北新→民族→建國路")
     }.get(label)
     if not cfg: return "路況查詢失敗"
@@ -281,11 +284,10 @@ def us():
         return f"❌ {name}: 查無資料"
     idx_lines = [q(c, n) for n, c in idx.items()]
     focus_lines = [q(c, n) for c, n in focus.items()]
-    # 如果三大指數全都查無資料
     if idx_miss == len(idx):
         return "📈 前一晚美股行情\n今日美股休市（或暫無行情）\n" + "\n".join(focus_lines)
     return "📈 前一晚美股行情\n" + "\n".join(idx_lines) + "\n" + "\n".join(focus_lines)
-# ========== 即時美股開盤行情 ==========
+
 def us_open():
     tickers = {
         "道瓊": ".DJI",
@@ -329,7 +331,7 @@ def j0710():
     now = datetime.now(tz)
     msg = (
         f"🌅 早安 {now:%Y-%m-%d (%a)}\n\n"
-        f"{safe_run(weather, '新北市新店區')}\n\n"
+        f"{safe_run(weather, '新店區')}\n\n"
         f"{safe_run(news)}\n\n"
         f"{safe_run(cal)}\n\n"
         f"{safe_run(fx)}\n\n"
@@ -338,7 +340,7 @@ def j0710():
     push(msg)
     
 def j0800():
-    push("🚌 通勤提醒\n\n"+traffic("家到公司")+"\n\n"+weather("台北市中山區"))
+    push("🚌 通勤提醒\n\n"+traffic("家到公司")+"\n\n"+weather("中山區"))
 
 def _tai(head):
     lst = ["大盤","台積電","聯電","鴻準","00918","00878","元大美債20年","群益25年美債","仁寶","陽明","華航","長榮航"]
@@ -351,9 +353,9 @@ def j1345(): _tai("🔚 台股收盤")
 def j1800():
     wd = datetime.now(tz).weekday()
     if wd in (0,2,4):   # 一三五
-        push("🏸 下班打球提醒（中正區）\n\n"+traffic("公司到中正區")+"\n\n"+weather("台北市中正區")+"\n\n"+get_taiwan_oil_price())
+        push("🏸 下班打球提醒（中正區）\n\n"+traffic("公司到中正區")+"\n\n"+weather("中正區")+"\n\n"+get_taiwan_oil_price())
     else:               # 二四
-        push("🏠 下班回家提醒（新店區）\n\n"+traffic("公司到新店區")+"\n\n"+weather("新北市新店區")+"\n\n"+get_taiwan_oil_price())
+        push("🏠 下班回家提醒（新店區）\n\n"+traffic("公司到新店區")+"\n\n"+weather("新店區")+"\n\n"+get_taiwan_oil_price())
 
 def j2130(): push(us_open())
 def j2300(): push("📊 美股行情更新\n\n"+us())
@@ -369,7 +371,7 @@ sch.add_job(j1345 ,'cron',hour=13,minute=45,day_of_week='mon-fri')
 sch.add_job(j1800 ,'cron',hour=18,minute=0 ,day_of_week='mon-fri')
 sch.add_job(j2130 ,'cron',hour=21,minute=30,day_of_week='mon-fri')
 sch.add_job(j2300 ,'cron',hour=23,minute=0 ,day_of_week='mon-fri')
-sch.add_job(keep  ,'cron',minute='0,10,20,30,40,50')
+sch.add_job(keep  ,'cron',minute='0,10,20,30,40,45,50')
 sch.start()
 
 # ========== Webhook / Health ==========
@@ -394,10 +396,8 @@ def test_us():
 
 @app.route("/test_weather", methods=["GET"])
 def test_weather():
-    loc = request.args.get("loc", "新北市新店區")
-    data = weather(loc)
-    print("[test_weather]", data)
-    return data
+    loc = request.args.get("loc", "新店區")  # 可帶「新店」、「新店區」、「中山」等
+    return weather(loc)
 
 @app.route("/test_oil")
 def test_oil():
