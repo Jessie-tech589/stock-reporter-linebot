@@ -380,9 +380,11 @@ def test_fx():
 @app.route("/test_us")
 def test_us():
     return us()
-@app.route("/test_weather")
+
+@app.route("/test_weather", methods=["GET"])
 def test_weather():
-    return weather("新店區")
+    loc = request.args.get("loc", "新店")  # 沒帶就預設新店
+    return weather(loc)
 
 @app.route("/test_oil")
 def test_oil():
