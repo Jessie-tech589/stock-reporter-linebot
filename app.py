@@ -151,44 +151,36 @@ def news():
 # ========== 股票 ==========
 def stock(name: str) -> str:
     code = STOCK.get(name, name)
-    # 台股（Fugle）
-    if code.endswith(".TW") and FUGLE_API_KEY:
-        sym = code.replace(".TW", "")
+    # 台股查詢（證交所 OpenAPI，不需API KEY）
+    if code.endswith(("TW", "tw")) or code.isdigit() or re.match(r'^\d', code):
         try:
-            url = f"https://api.fugle.tw/marketdata/v1.0/intraday/quote/{sym}?apiToken={FUGLE_API_KEY}"
-            r = requests.get(url, timeout=10)
-            dq = r.json().get("data", {}).get("quote") if r.status_code == 200 else None
-            price = dq.get("tradePrice") if dq else None
-            prev = dq.get("prevClose") if dq else None
-            if price and prev:
-                diff = price - prev
-                pct = diff / prev * 100 if prev else 0
-                emo = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
-                return f"{emo} {name} ({code})\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
-            else:
-                return f"❌ {name}（台股）查無資料"
-        except Exception as e:
-            print("[FUGLE-ERR]", code, e)
+            url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_AVG_ALL"
+            data = requests.get(url, timeout=10).json()
+            code4 = code.zfill(4)
+            for row in data:
+                if row.get('證券代號') == code4:
+                    price = float(row['收盤價'])
+                    return f"➡️ {name}（台股）\n💰 {price:.2f}\n(僅收盤價)"
             return f"❌ {name}（台股）查無資料"
-    # 美股（Finnhub）
-    elif code.isalpha() and FINNHUB_API_KEY:
-        try:
-            url = f"https://finnhub.io/api/v1/quote?symbol={code}&token={FINNHUB_API_KEY}"
-            r = requests.get(url, timeout=10)
-            data = r.json() if r.status_code == 200 else {}
-            c = data.get("c"); pc = data.get("pc")
-            if c and pc:
-                diff = c - pc
-                pct = diff / pc * 100 if pc else 0
-                emo = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
-                return f"{emo} {name} ({code})\n💰 {c:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
-            else:
-                return f"❌ {name}（美股）查無資料"
         except Exception as e:
-            print("[FINNHUB-ERR]", code, e)
+            print("[TWSE-ERR]", code, e)
+            return f"❌ {name}（台股）查詢失敗"
+    # 美股查詢（Yahoo/yfinance）
+    try:
+        tkr = yf.Ticker(code)
+        info = getattr(tkr, "fast_info", {}) or tkr.info
+        price = info.get("regularMarketPrice")
+        prev  = info.get("previousClose")
+        if price and prev:
+            diff = price - prev
+            pct  = diff / prev * 100
+            emo  = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
+            return f"{emo} {name}（美股）\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
+        else:
             return f"❌ {name}（美股）查無資料"
-    # 其它
-    return f"❌ {name} 查無股價"
+    except Exception as e:
+        print("[YF-ERR]", code, e)
+        return f"❌ {name}（美股）查詢失敗"
 
 
 # ========== 行事曆 ==========
