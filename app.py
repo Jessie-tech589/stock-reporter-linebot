@@ -134,24 +134,24 @@ def get_taiwan_oil_price():
     url = "https://www2.moeaea.gov.tw/oil111/Gasoline/NationwideAvg"
     try:
         r = requests.get(url, timeout=10)
-        soup = BeautifulSoup(r.text, "lxml")
-        table = soup.find("table", class_="table-bordered")
-        if not table:
-            return "油價查詢失敗（找不到表格）"
-        rows = table.find_all("tr")
-        result = []
-        for row in rows[1:]:  # 跳過表頭
-            cols = [col.text.strip() for col in row.find_all("td")]
-            if len(cols) >= 2:
-                oil_type, price = cols[0], cols[1]
-                result.append(f"{oil_type}: {price} 元")
-        if result:
-            return "⛽ 台灣本週平均零售油價\n" + "\n".join(result)
-        else:
-            return "油價查無資料"
+        data = r.json()
+        # 解析 JSON 內容
+        lst = data.get('nationwideAvgList', [])
+        if not lst:
+            return "油價查詢失敗（無資料）"
+        # 取最新一筆
+        today = lst[0]
+        return (
+            f"⛽ 本週油價（{today['announceDate']}）\n"
+            f"92無鉛: {today['gasoline92']} 元\n"
+            f"95無鉛: {today['gasoline95']} 元\n"
+            f"98無鉛: {today['gasoline98']} 元\n"
+            f"超級柴油: {today['diesel']} 元"
+        )
     except Exception as e:
-        print("[MOEA-OIL-ERR]", e)
+        print("[OIL-ERR]", e)
         return "油價查詢失敗"
+
 # ========== 新聞 ==========
 def news():
     """
