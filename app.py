@@ -53,35 +53,47 @@ def safe_get(url, timeout=10):
 
 # ========== 天氣 ==========
 def weather(loc: str) -> str:
-    import requests
+    import requests, os, json
     from urllib.parse import quote
+
+    # 自動補上新北市或台北市
+    if loc in ["新店", "新店區"]:
+        loc_full = "新北市新店區"
+    elif loc in ["中山", "中山區"]:
+        loc_full = "台北市中山區"
+    elif loc in ["中正", "中正區"]:
+        loc_full = "台北市中正區"
+    elif loc in ["大安", "大安區"]:
+        loc_full = "台北市大安區"
+    else:
+        loc_full = loc  # 若用戶直接傳正確地名
 
     url = (
         f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089"
-        f"?Authorization={os.getenv('CWA_API_KEY')}&locationName={quote(loc)}"
+        f"?Authorization={os.getenv('CWA_API_KEY')}&locationName={quote(loc_full)}"
     )
     try:
         r = requests.get(url, timeout=10)
         data = r.json() if r and r.status_code == 200 else {}
-        # --- debug: 輸出回傳資料 ---
-        print("[CWA DATA]", json.dumps(data, ensure_ascii=False)[:800])  # 只印前800字防爆
-        # --- end debug ---
+        # 先檢查回傳資料
         locs = data.get("records", {}).get("locations", [])
         if not locs or not locs[0].get("location"):
-            return f"天氣查詢失敗（{loc}）"
-        info = locs[0]["location"][0]
-        wx = info["weatherElement"][6]["time"][0]["elementValue"][0]["value"]
-        pop = info["weatherElement"][7]["time"][0]["elementValue"][0]["value"]
-        minT = info["weatherElement"][8]["time"][0]["elementValue"][0]["value"]
-        maxT = info["weatherElement"][12]["time"][0]["elementValue"][0]["value"]
-        return (f"🌦️ {loc}\n"
-                f"{wx}，降雨 {pop}%\n"
-                f"🌡️ {minT}～{maxT}°C")
+            return f"天氣查詢失敗（{loc_full}）"
+        # API 會回一個 location list，要逐個找出「正確區名」
+        for info in locs[0]["location"]:
+            name = info.get("locationName", "")
+            if name == loc_full:
+                wx = info["weatherElement"][6]["time"][0]["elementValue"][0]["value"]  # 天氣現象
+                pop = info["weatherElement"][7]["time"][0]["elementValue"][0]["value"]  # 降雨機率
+                minT = info["weatherElement"][8]["time"][0]["elementValue"][0]["value"]  # 最低溫
+                maxT = info["weatherElement"][12]["time"][0]["elementValue"][0]["value"] # 最高溫
+                return (f"🌦️ {name}\n"
+                        f"{wx}，降雨 {pop}%\n"
+                        f"🌡️ {minT}～{maxT}°C")
+        return f"天氣查無指定地區（{loc_full}）"
     except Exception as e:
         print("[CWA-WX-ERR]", e)
-        return f"天氣查詢失敗（{loc}）"
-
-
+        return f"天氣查詢失敗（{loc_full}）"
 
 
 # ========== 匯率 ==========
@@ -387,7 +399,7 @@ def test_us():
 
 @app.route("/test_weather", methods=["GET"])
 def test_weather():
-    loc = request.args.get("loc", "新店")  # 沒帶就預設新店
+    loc = request.args.get("loc", "新店區")  # 可帶「新店」、「新店區」、「中山」等
     return weather(loc)
 
 @app.route("/test_oil")
@@ -401,31 +413,6 @@ def test_stock():
 @app.route("/health")
 def health():
     return "OK"
-@app.route("/test_cwa")
-def test_cwb():
-    import requests
-    import urllib.parse
-
-    CWB_API_KEY = os.environ.get("CWB_API_KEY", "你的 CWA 金鑰")
-    location = "新店區"
-    location_encoded = urllib.parse.quote(location)
-
-    url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089?Authorization={CWB_API_KEY}&locationName={location_encoded}"
-
-    try:
-        resp = requests.get(url, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            records = data.get("records", {})
-            locations = records.get("locations", [])
-            if locations:
-                return f"✅ OK！取得 {location} 資料成功"
-            else:
-                return f"⚠️ 沒有找到 {location} 的資料，請檢查 locationName"
-        else:
-            return f"❌ HTTP 錯誤：{resp.status_code}"
-    except Exception as e:
-        return f"❌ 例外錯誤：{str(e)}"
 
 # ========== 主程式 ==========
 if __name__ == "__main__":
