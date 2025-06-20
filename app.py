@@ -58,15 +58,20 @@ def weather(loc: str) -> str:
     以「區名」查詢中央氣象署 F-D0047-089 API 天氣（未來24小時預報）
     例：新店區、中山區、大安區
     """
-   
     if not CWA_API_KEY:
         return "【系統未設定CWA_API_KEY】"
-
     loc = loc.strip()
+    # 自動補全
+    city = DISTRICT_CITY.get(loc)
+    if city:
+        search = f"{city}{loc}"
+    else:
+        search = loc
     url = (
         f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089"
-        f"?Authorization={CWA_API_KEY}&locationName={quote(loc)}"
+        f"?Authorization={CWA_API_KEY}&locationName={quote(search)}"
     )
+    print(f"[CWA-DEBUG] 查詢地名: {search}  API_KEY: {'有' if CWA_API_KEY else '無'}")
     try:
         r = requests.get(url, timeout=10)
         if r.status_code != 200:
@@ -76,16 +81,17 @@ def weather(loc: str) -> str:
         if not locations or not locations[0].get("location"):
             return f"天氣查詢失敗（{loc}）"
         info = locations[0]["location"][0]
-        wx   = info["weatherElement"][6]["time"][0]["elementValue"][0]["value"]   # 天氣現象
-        pop  = info["weatherElement"][7]["time"][0]["elementValue"][0]["value"]   # 降雨機率
-        minT = info["weatherElement"][8]["time"][0]["elementValue"][0]["value"]   # 最低溫
-        maxT = info["weatherElement"][12]["time"][0]["elementValue"][0]["value"]  # 最高溫
+        wx   = info["weatherElement"][6]["time"][0]["elementValue"][0]["value"]
+        pop  = info["weatherElement"][7]["time"][0]["elementValue"][0]["value"]
+        minT = info["weatherElement"][8]["time"][0]["elementValue"][0]["value"]
+        maxT = info["weatherElement"][12]["time"][0]["elementValue"][0]["value"]
         return (f"🌦️ {loc}\n"
                 f"{wx}，降雨 {pop}%\n"
                 f"🌡️ {minT}～{maxT}°C")
     except Exception as e:
         print("[CWA-WX-ERR]", e)
-        return f"天氣查詢失敗（{loc}）"
+        return f"天氣查詢失敗（{loc}）"   
+   
 
 # ========== 匯率 ==========
 def fx():
@@ -125,28 +131,36 @@ def fx():
 
 # ========== 油價 ==========
 def oil():
-    # 官方公開網頁
-    url = "https://vipmbr.cpc.com.tw/mbwebs/mbprice_oil.aspx"
-    r = safe_get(url)
+"""
+    查詢台灣中油今日油價（92、95、98、超柴）。
+    """
+    url = "https://www.cpc.com.tw/historyprice.aspx?n=2890"
     try:
-        if r:
-            soup = BeautifulSoup(r.text, "lxml")
-            table = soup.find("table", {"id":"gvOilPrice"})
-            rows = table.find_all("tr") if table else []
-            if len(rows) > 2:
-                cells = rows[1].find_all("td")
-                price_92 = cells[1].text.strip()
-                price_95 = cells[2].text.strip()
-                price_98 = cells[3].text.strip()
-                price_ds = cells[4].text.strip()
-                return (f"⛽ 今日油價：\n"
-                        f"92: {price_92} 元\n"
-                        f"95: {price_95} 元\n"
-                        f"98: {price_98} 元\n"
-                        f"超柴: {price_ds} 元")
+        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        soup = BeautifulSoup(r.text, "lxml")
+        table = soup.find("table", {"class": "hasBorder"})
+        if not table:
+            return "油價查詢失敗"
+        # 第一行是表頭，第二行是今日油價
+        rows = table.find_all("tr")
+        if len(rows) < 2:
+            return "油價查詢失敗"
+        cells = rows[1].find_all("td")
+        if len(cells) < 5:
+            return "油價查詢失敗"
+        date = cells[0].text.strip()
+        price_92 = cells[1].text.strip()
+        price_95 = cells[2].text.strip()
+        price_98 = cells[3].text.strip()
+        price_ds = cells[4].text.strip()
+        return (f"⛽ 今日油價（{date}）\n"
+                f"92: {price_92} 元\n"
+                f"95: {price_95} 元\n"
+                f"98: {price_98} 元\n"
+                f"超柴: {price_ds} 元")
     except Exception as e:
         print("[OIL-ERR]", e)
-    return "油價查詢失敗"
+        return "油價查詢失敗"
 
 # ========== 新聞 ==========
 def news():
@@ -325,7 +339,7 @@ def j0710():
     now = datetime.now(tz)
     msg = (
         f"🌅 早安 {now:%Y-%m-%d (%a)}\n\n"
-        f"{safe_run(weather, '新北市新店')}\n\n"
+        f"{safe_run(weather, '新北市新店區')}\n\n"
         f"{safe_run(news)}\n\n"
         f"{safe_run(cal)}\n\n"
         f"{safe_run(fx)}\n\n"
@@ -390,7 +404,7 @@ def test_us():
 
 @app.route("/test_weather", methods=["GET"])
 def test_weather():
-    loc = request.args.get("loc", "新店區")  # 可帶「新店」、「新店區」、「中山」等
+    loc = request.args.get("loc", "新北市新店區")  # 可帶「新店」、「新店區」、「中山」等
     return weather(loc)
 
 @app.route("/test_oil")
@@ -399,7 +413,7 @@ def test_oil():
 
 @app.route("/test_stock")
 def test_stock():
-    return stock("台積電")
+    return stock("聯電")
 
 @app.route("/health")
 def health():
