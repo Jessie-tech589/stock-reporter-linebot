@@ -130,39 +130,28 @@ def fx():
 
 
 # ========== 油價 ==========
-def oil():
-    """
-    查詢台灣中油今日油價（92、95、98、超柴）。
-    """
-    url = "https://www.cpc.com.tw/historyprice.aspx?n=2890"
+def get_taiwan_oil_price():
+    url = "https://www2.moeaea.gov.tw/oil111/Gasoline/NationwideAvg"
     try:
-        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-        print("[OIL-DEBUG]", r.text[:1000])  # 新增這行，印前1000字
+        r = requests.get(url, timeout=10)
         soup = BeautifulSoup(r.text, "lxml")
-        table = soup.find("table", {"class": "hasBorder"})
+        table = soup.find("table", class_="table-bordered")
         if not table:
-            return "油價查詢失敗"
-        # 第一行是表頭，第二行是今日油價
+            return "油價查詢失敗（找不到表格）"
         rows = table.find_all("tr")
-        if len(rows) < 2:
-            return "油價查詢失敗"
-        cells = rows[1].find_all("td")
-        if len(cells) < 5:
-            return "油價查詢失敗"
-        date = cells[0].text.strip()
-        price_92 = cells[1].text.strip()
-        price_95 = cells[2].text.strip()
-        price_98 = cells[3].text.strip()
-        price_ds = cells[4].text.strip()
-        return (f"⛽ 今日油價（{date}）\n"
-                f"92: {price_92} 元\n"
-                f"95: {price_95} 元\n"
-                f"98: {price_98} 元\n"
-                f"超柴: {price_ds} 元")
+        result = []
+        for row in rows[1:]:  # 跳過表頭
+            cols = [col.text.strip() for col in row.find_all("td")]
+            if len(cols) >= 2:
+                oil_type, price = cols[0], cols[1]
+                result.append(f"{oil_type}: {price} 元")
+        if result:
+            return "⛽ 台灣本週平均零售油價\n" + "\n".join(result)
+        else:
+            return "油價查無資料"
     except Exception as e:
-        print("[OIL-ERR]", e)
+        print("[MOEA-OIL-ERR]", e)
         return "油價查詢失敗"
-
 # ========== 新聞 ==========
 def news():
     """
@@ -362,9 +351,9 @@ def j1345(): _tai("🔚 台股收盤")
 def j1800():
     wd = datetime.now(tz).weekday()
     if wd in (0,2,4):   # 一三五
-        push("🏸 下班打球提醒（中正區）\n\n"+traffic("公司到中正區")+"\n\n"+weather("台北市中正區")+"\n\n"+oil())
+        push("🏸 下班打球提醒（中正區）\n\n"+traffic("公司到中正區")+"\n\n"+weather("台北市中正區")+"\n\n"+get_taiwan_oil_price())
     else:               # 二四
-        push("🏠 下班回家提醒（新店區）\n\n"+traffic("公司到新店區")+"\n\n"+weather("新北市新店區")+"\n\n"+oil())
+        push("🏠 下班回家提醒（新店區）\n\n"+traffic("公司到新店區")+"\n\n"+weather("新北市新店區")+"\n\n"+get_taiwan_oil_price())
 
 def j2130(): push(us_open())
 def j2300(): push("📊 美股行情更新\n\n"+us())
@@ -410,7 +399,7 @@ def test_weather():
 
 @app.route("/test_oil")
 def test_oil():
-    return oil()
+    return get_taiwan_oil_price()
 
 @app.route("/test_stock")
 def test_stock():
@@ -424,4 +413,5 @@ def health():
 if __name__ == "__main__":
     print("[TEST] 台積電 =", stock("台積電"))
     print("[TEST] NVDA  =", stock("NVDA"))
+    print(get_taiwan_oil_price())
     app.run(host="0.0.0.0", port=10000)
