@@ -171,48 +171,38 @@ def news():
 
 # ========== 股票 ==========
 def stock(name: str) -> str:
-    """
-    台股優先用證交所 OpenAPI（收盤價），失敗才用 yfinance。
-    美股直接用 yfinance（盤中為延遲15分鐘）。
-    """
     code = STOCK.get(name, name)
-    # 台股（證交所 OpenAPI）
-    if code.endswith(".TW"):
-        sym = code.replace(".TW", "").zfill(4)
+    # 台股：代號是4碼數字或 .TW 結尾
+    if code.endswith(".TW") or re.match(r"^\d{4}$", code):
+        sym = code.replace(".TW", "")
         try:
             url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_AVG_ALL"
             r = safe_get(url)
             data = r.json() if r else []
             for row in data:
                 if row.get('證券代號') == sym:
-                    price = row.get('收盤價')
-                    if price and price != '--':
-                        return f"📈 {name}（台股）\n💰 {price}（收盤價）"
-                    else:
-                        return f"❌ {name}（台股） 查無今日收盤價"
+                    price = float(row['收盤價'])
+                    return f"📊 {name}（台股）\n💰 {price:.2f}（僅收盤價）"
             return f"❌ {name}（台股） 查無代號"
         except Exception as e:
             print("[TWSE-ERR]", code, e)
-            # fallback to yfinance
-    # 美股與其它（Yahoo/yfinance）
+            return f"❌ {name}（台股） 查詢失敗"
+    # 美股
     try:
         tkr = yf.Ticker(code)
         info = getattr(tkr, "fast_info", {}) or tkr.info
         price = info.get("regularMarketPrice")
-        prev = info.get("previousClose")
-        if price is not None and prev is not None:
+        prev  = info.get("previousClose")
+        if price and prev:
             diff = price - prev
-            pct = diff / prev * 100 if prev else 0
-            emo = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
-            market = "美股" if "." not in code else "台股"
-            return f"{emo} {name}（{market}）\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
+            pct  = diff / prev * 100
+            emo  = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
+            return f"{emo} {name}（美股）\n💰 {price:.2f}\n{diff:+.2f} ({pct:+.2f}%)"
         else:
-            return f"❌ {name} 查無資料"
+            return f"❌ {name}（美股） 查無資料"
     except Exception as e:
         print("[YF-ERR]", code, e)
-        return f"❌ {name} 查詢失敗"
-
-
+        return f"❌ {name}（美股） 查詢失敗"
 
 # ========== 行事曆 ==========
 def cal():
