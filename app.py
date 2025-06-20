@@ -145,13 +145,18 @@ def oil():
 
 # ========== 新聞 ==========
 def news():
-    r = safe_get(f"https://newsapi.org/v2/top-headlines?country=tw&apiKey={NEWS_API_KEY}")
+    url = f"https://newsapi.org/v2/top-headlines?country=tw&apiKey={NEWS_API_KEY}"
+    r = safe_get(url)
     try:
-        arts = [a["title"] for a in (r.json().get("articles",[]) if r else []) if a.get("title")] [:3]
+        data = r.json() if r else {}
+        if data.get("status") != "ok":
+            return f"新聞API錯誤：{data.get('message','無法取得')}"
+        arts = [a["title"] for a in data.get("articles", []) if a.get("title")] [:3]
         return "\n".join("• "+t for t in arts) if arts else "今日無新聞"
     except Exception as e:
         print("[NEWS-ERR]", e)
         return "新聞查詢失敗"
+
 
 # ========== 股票 ==========
 def stock(name: str) -> str:
