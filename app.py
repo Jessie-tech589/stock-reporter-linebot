@@ -137,6 +137,7 @@ def oil():
     url = "https://www.cpc.com.tw/historyprice.aspx?n=2890"
     try:
         r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        print("[OIL-DEBUG]", r.text[:1000])  # 新增這行，印前1000字
         soup = BeautifulSoup(r.text, "lxml")
         table = soup.find("table", {"class": "hasBorder"})
         if not table:
