@@ -1,4 +1,4 @@
-import os, base64, json, re, requests, yfinance as yf
+import os, base64, json, requests, yfinance as yf
 from datetime import datetime, timedelta, date
 import pytz
 from flask import Flask, request, abort
@@ -6,6 +6,7 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import TextSendMessage
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from urllib.parse import quote
@@ -13,15 +14,15 @@ from urllib.parse import quote
 app = Flask(__name__)
 tz = pytz.timezone("Asia/Taipei")
 
-# ========== ENV ===============
+# ==== ENV ====
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "dummy")
 LINE_CHANNEL_SECRET      = os.getenv("LINE_CHANNEL_SECRET", "dummy")
 LINE_USER_ID             = os.getenv("LINE_USER_ID")
-WEATHER_API_KEY          = os.getenv("WEATHER_API_KEY")          # CWA_API_KEY
+WEATHER_API_KEY          = os.getenv("WEATHER_API_KEY")
 GOOGLE_MAPS_API_KEY      = os.getenv("GOOGLE_MAPS_API_KEY")
 NEWS_API_KEY             = os.getenv("NEWS_API_KEY")
 GOOGLE_CREDS_JSON_B64    = os.getenv("GOOGLE_CREDS_JSON")
-GOOGLE_CALENDAR_ID       = os.getenv("GOOGLE_CALENDAR_ID","primary")
+GOOGLE_CALENDAR_ID       = os.getenv("GOOGLE_CALENDAR_ID", "primary")
 FUGLE_API_KEY            = os.getenv("FUGLE_API_KEY")
 FINNHUB_API_KEY          = os.getenv("FINNHUB_API_KEY")
 CWA_API_KEY              = os.getenv("CWA_API_KEY", WEATHER_API_KEY)
@@ -29,17 +30,16 @@ CWA_API_KEY              = os.getenv("CWA_API_KEY", WEATHER_API_KEY)
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler      = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# ========== 常用地名對照表（自動補全用） ==========
+# ==== 常用地名 ====
 DISTRICT_FULLNAME = {
     "新店": "新北市新店區", "新店區": "新北市新店區",
     "中山": "台北市中山區", "中山區": "台北市中山區",
     "中正": "台北市中正區", "中正區": "台北市中正區",
     "大安": "台北市大安區", "大安區": "台北市大安區",
-    "新莊": "新北市新莊區", "新莊區": "新北市新莊區",
-    # ... 可自行增加常用地名簡寫
+    "新莊": "新北市新莊區", "新莊區": "新北市新莊區"
 }
 
-# ========== STOCK MAPPING =============
+# ==== STOCK MAP ====
 STOCK = {
     "輝達":"NVDA","美超微":"SMCI","GOOGL":"GOOGL","Google":"GOOGL",
     "蘋果":"AAPL","特斯拉":"TSLA","微軟":"MSFT",
@@ -51,6 +51,7 @@ STOCK = {
     "大盤":"^TWII"
 }
 
+# ==== 共用 ====
 def safe_get(url, timeout=10):
     try:
         r = requests.get(url, timeout=timeout, headers={"User-Agent":"Mozilla/5.0"})
@@ -59,9 +60,15 @@ def safe_get(url, timeout=10):
         print("[REQ-ERR]", url, e)
         return None
 
-# ========== 天氣查詢（自動補全地名） ==========
+def push_message(user_id, message):
+    try:
+        print(f"[LineBot] 推播給 {user_id}: {message}")
+        line_bot_api.push_message(user_id, TextSendMessage(text=message))
+    except Exception as e:
+        print(f"[LineBot] 推播失敗: {e}")
+
+# ==== 功能 ====
 def weather(loc: str) -> str:
-    # 1. 自動補全行政區全名
     search = DISTRICT_FULLNAME.get(loc.strip(), loc.strip())
     url = (
         f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089"
@@ -73,7 +80,6 @@ def weather(loc: str) -> str:
         print(f"[CWA-DEBUG] status: {r.status_code}")
         data = r.json()
         print(f"[CWA-DEBUG] data: {data}")
-        # 2. 解析 locations
         locations = data.get("records", {}).get("locations", [])
         if not locations or not locations[0].get("location"):
             return f"天氣查詢失敗（{search}）"
@@ -87,9 +93,8 @@ def weather(loc: str) -> str:
                 f"🌡️ {minT}～{maxT}°C")
     except Exception as e:
         print("[CWA-WX-ERR]", e)
-        return f"天氣查詢失敗（{search}）"   
+        return f"天氣查詢失敗（{search}）"
 
-# ========== 匯率 ==========
 def fx():
     url = "https://rate.bot.com.tw/xrt?Lang=zh-TW"
     r = safe_get(url)
@@ -118,14 +123,13 @@ def fx():
             if len(cells) > 0:
                 name = cells[0].text.strip()
                 if name in mapping:
-                    rate = cells[2].text.strip()  # 本行現金賣出
+                    rate = cells[2].text.strip()
                     result.append(f"{flag[mapping[name]]} {mapping[name]}：{rate}")
         return "💱 今日匯率（現金賣出）\n" + "\n".join(result) if result else "查無匯率資料"
     except Exception as e:
         print("[FX-ERR]", e)
         return "匯率查詢失敗"
 
-# ========== 油價 ==========
 def get_taiwan_oil_price():
     url = "https://www2.moeaea.gov.tw/oil111/Gasoline/NationwideAvg"
     try:
@@ -146,7 +150,6 @@ def get_taiwan_oil_price():
         print("[OIL-ERR]", e)
         return "油價查詢失敗"
 
-# ========== 新聞 ==========
 def news():
     sources = [
         ("台灣", "tw"),
@@ -160,17 +163,15 @@ def news():
         try:
             data = r.json() if r else {}
             if data.get("status") == "ok":
-                arts = [a["title"] for a in data.get("articles", []) if a.get("title")] [:3]
+                arts = [a["title"] for a in data.get("articles", []) if a.get("title")][:3]
                 if arts:
                     result.append(f"【{label}】" + "\n" + "\n".join("• " + t for t in arts))
         except Exception as e:
             print(f"[NEWS-{label}-ERR]", e)
     return "\n\n".join(result) if result else "今日無新聞"
 
-# ========== 股票 ==========
 def stock(name: str) -> str:
     code = STOCK.get(name, name)
-    # 台股
     if code.endswith(".TW"):
         sym = code.replace(".TW", "").zfill(4)
         url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_AVG_ALL"
@@ -184,7 +185,6 @@ def stock(name: str) -> str:
                 else:
                     return f"❌ {name}（台股） 查無今日收盤價"
         return f"❌ {name}（台股） 查無代號"
-    # 美股
     try:
         tkr = yf.Ticker(code)
         info = getattr(tkr, "fast_info", {}) or tkr.info
@@ -201,7 +201,6 @@ def stock(name: str) -> str:
         print("[YF-ERR]", code, e)
         return f"❌ {name}（美股） 查詢失敗"
 
-# ========== 行事曆 ==========
 def cal():
     if not GOOGLE_CREDS_JSON_B64: return "行事曆查詢失敗"
     try:
@@ -217,7 +216,6 @@ def cal():
         print("[CAL-ERR]", e)
         return "行事曆查詢失敗"
 
-# ========== 美股前一晚摘要 ==========
 def us():
     idx = {"道瓊": ".DJI", "S&P500": ".INX", "NASDAQ": ".IXIC"}
     focus = {"NVDA":"輝達", "SMCI":"美超微", "GOOGL":"Google", "AAPL":"蘋果"}
@@ -245,16 +243,83 @@ def us():
         return "📈 前一晚美股行情\n今日美股休市（或暫無行情）\n" + "\n".join(focus_lines)
     return "📈 前一晚美股行情\n" + "\n".join(idx_lines) + "\n" + "\n".join(focus_lines)
 
-# ========== LINE 推播 ==========
-def push(msg): line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=msg.strip()))
+# ==== 10 段定時推播 & LOG ====
 
-def safe_run(fn, *args, **kwargs):
-    try:
-        return fn(*args, **kwargs)
-    except Exception as e:
-        return f"{fn.__name__} 查詢失敗"
+def log_sched(job_code, message):
+    print(f"[Scheduler] 排程觸發時間：{datetime.now()}, 任務：{job_code}")
+    print(f"[Scheduler] 準備推播內容：{message}")
 
-# ========== 測試 & Webhook ==========
+def morning_briefing():
+    msg = (
+        weather("中山區") + "\n" +
+        news() + "\n" +
+        cal() + "\n" +
+        fx() + "\n" +
+        us()
+    )
+    log_sched("07:10-morning_briefing", msg)
+    push_message(LINE_USER_ID, msg)
+
+def commute_to_work():
+    msg = weather("中山區") + "\n" + "通勤提醒"
+    log_sched("08:00-commute_to_work", msg)
+    push_message(LINE_USER_ID, msg)
+
+def market_open():
+    msg = stock("台積電")
+    log_sched("09:30-market_open", msg)
+    push_message(LINE_USER_ID, msg)
+
+def market_mid():
+    msg = stock("台積電")
+    log_sched("12:00-market_mid", msg)
+    push_message(LINE_USER_ID, msg)
+
+def market_close():
+    msg = stock("台積電")
+    log_sched("13:45-market_close", msg)
+    push_message(LINE_USER_ID, msg)
+
+def evening_zhongzheng():
+    msg = weather("中正區") + "\n" + get_taiwan_oil_price() + "\n打球提醒（中正區）"
+    log_sched("17:30-evening_zhongzheng", msg)
+    push_message(LINE_USER_ID, msg)
+
+def evening_xindian():
+    msg = weather("新店區") + "\n" + get_taiwan_oil_price() + "\n打球提醒（新店區）"
+    log_sched("17:30-evening_xindian", msg)
+    push_message(LINE_USER_ID, msg)
+
+def us_market_open1():
+    msg = us() + "\n美股開盤速報（第一波）"
+    log_sched("21:30-us_market_open1", msg)
+    push_message(LINE_USER_ID, msg)
+
+def us_market_open2():
+    msg = us() + "\n美股行情摘要（第二波）"
+    log_sched("23:00-us_market_open2", msg)
+    push_message(LINE_USER_ID, msg)
+
+def keep_alive():
+    print(f"[Scheduler] 定時喚醒維持運作 {datetime.now()}")
+
+# ==== Scheduler 設定 ====
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(morning_briefing,   CronTrigger(hour=7,  minute=10))
+scheduler.add_job(commute_to_work,    CronTrigger(hour=8,  minute=0))
+scheduler.add_job(market_open,        CronTrigger(hour=9,  minute=30))
+scheduler.add_job(market_mid,         CronTrigger(hour=12, minute=0))
+scheduler.add_job(market_close,       CronTrigger(hour=13, minute=45))
+scheduler.add_job(evening_zhongzheng, CronTrigger(day_of_week='mon,wed,fri', hour=17, minute=30))
+scheduler.add_job(evening_xindian,    CronTrigger(day_of_week='tue,thu',    hour=17, minute=30))
+scheduler.add_job(us_market_open1,    CronTrigger(hour=21, minute=30))
+scheduler.add_job(us_market_open2,    CronTrigger(hour=23, minute=0))
+scheduler.add_job(keep_alive,         "cron", minute='0,10,20,30,40,45,50')
+scheduler.start()
+
+# ==== 測試 & Webhook ====
+
 @app.route("/callback", methods=["POST"])
 def callback():
     try:
@@ -292,7 +357,7 @@ def test_us():
 def health():
     return "OK"
 
-# ========== 主程式 ==========
+# ==== 主程式 ====
 if __name__ == "__main__":
     print("[TEST] 台積電 =", stock("台積電"))
     print("[TEST] NVDA  =", stock("NVDA"))
