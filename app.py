@@ -1,9 +1,8 @@
-import os, base64, json, re, requests, yfinance as yf
+import os, base64, json, requests, yfinance as yf
 from datetime import datetime, timedelta, date
 import pytz
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
-from linebot.exceptions import InvalidSignatureError
 from linebot.models import TextSendMessage
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -14,7 +13,7 @@ from urllib.parse import quote
 app = Flask(__name__)
 tz = pytz.timezone("Asia/Taipei")
 
-# ========== [環境變數載入] ==========
+# ======== 環境變數 ========
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "dummy")
 LINE_CHANNEL_SECRET      = os.getenv("LINE_CHANNEL_SECRET", "dummy")
 LINE_USER_ID             = os.getenv("LINE_USER_ID")
@@ -27,47 +26,85 @@ FUGLE_API_KEY            = os.getenv("FUGLE_API_KEY")
 FINNHUB_API_KEY          = os.getenv("FINNHUB_API_KEY")
 CWA_API_KEY              = os.getenv("CWA_API_KEY", WEATHER_API_KEY)
 
-# LINE SDK 初始化
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler      = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# ========== [地名自動補全字典] ==========
+# ====== 地名/台股定義 ======
 DISTRICT_FULLNAME = {
     "新店": "新北市新店區", "新店區": "新北市新店區",
     "中山": "台北市中山區", "中山區": "台北市中山區",
     "中正": "台北市中正區", "中正區": "台北市中正區",
     "大安": "台北市大安區", "大安區": "台北市大安區",
-    "新莊": "新北市新莊區", "新莊區": "新北市新莊區",
+    "新莊": "新北市新莊區", "新莊區": "新北市新莊區"
 }
 
-# ========== [股票對照表] ==========
 STOCK = {
-    "輝達":"NVDA","美超微":"SMCI","GOOGL":"GOOGL","Google":"GOOGL",
-    "蘋果":"AAPL","特斯拉":"TSLA","微軟":"MSFT",
-    "台積電":"2330.TW","聯電":"2303.TW",
-    "鴻準":"2354.TW","仁寶":"2324.TW",
-    "陽明":"2609.TW","華航":"2610.TW","長榮航":"2618.TW",
-    "00918":"00918.TW","00878":"00878.TW",
-    "元大美債20年":"00679B.TW","群益25年美債":"00723B.TW",
-    "大盤":"^TWII"
+    "台積電": "2330.TW", "聯電": "2303.TW", "鴻準": "2354.TW",
+    "仁寶": "2324.TW", "陽明": "2609.TW", "華航": "2610.TW",
+    "長榮航": "2618.TW", "00918": "00918.TW", "00878": "00878.TW",
+    "元大美債20年": "00679B.TW", "群益25年美債": "00723B.TW",
+    "大盤": "^TWII", "輝達": "NVDA", "美超微": "SMCI", "Google": "GOOGL", "蘋果": "AAPL"
 }
 
-# ========== [工具：安全的 requests get] ==========
+# ====== 交通路線定義 ======
+def traffic_config(label):
+    cfg = {
+        "家到公司": dict(
+            o="新北市新店區建國路99巷",
+            d="台北市中山區南京東路三段131號",
+            sum="新北市新店區建國路|新北市新店區民族路|新北市新店區北新路|台北市羅斯福路|台北市基隆路|台北市辛亥路|台北市復興南路|台北市南京東路"
+        ),
+        "公司到中正區": dict(
+            o="台北市中山區南京東路三段131號",
+            d="台北市中正區愛國東路216號",
+            sum="台北市南京東路|台北市林森北路|台北市信義路|台北市信義二段10巷|台北市愛國東21巷"
+        ),
+        "公司到新店區": dict(
+            o="台北市中山區南京東路三段131號",
+            d="新北市新店區建國路99巷",
+            sum="台北市南京東路|台北市復興南路|台北市辛亥路|台北市基隆路|台北市羅斯福路|新北市新店區北新路|新北市新店區民族路|新北市新店區建國路"
+        )
+    }
+    return cfg.get(label)
+
+def traffic_route(label):
+    # 取得即時路況，回傳文字描述
+    conf = traffic_config(label)
+    if not conf or not GOOGLE_MAPS_API_KEY:
+        return "交通路況查詢失敗"
+    url = (
+        f"https://maps.googleapis.com/maps/api/directions/json?"
+        f"origin={quote(conf['o'])}&destination={quote(conf['d'])}&key={GOOGLE_MAPS_API_KEY}&departure_time=now"
+    )
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        if data.get("status") != "OK":
+            return "交通查詢失敗"
+        route = data["routes"][0]["legs"][0]
+        summary = conf["sum"].replace("|", " ➔ ")
+        dur = route["duration_in_traffic"]["text"] if "duration_in_traffic" in route else route["duration"]["text"]
+        return (f"🚗 預設路線：{summary}\n"
+                f"🕒 預估行車時間：{dur}")
+    except Exception as e:
+        print("[TRAFFIC-ERR]", e)
+        return "交通查詢失敗"
+
 def safe_get(url, timeout=10):
     try:
-        print(f"[REQ] {url}")
+        print("[REQ]", url)
         r = requests.get(url, timeout=timeout, headers={"User-Agent":"Mozilla/5.0"})
-        print(f"[RESP] {r.status_code}")
+        print("[RESP]", r.status_code)
         return r if r.status_code==200 else None
     except Exception as e:
         print("[REQ-ERR]", url, e)
         return None
 
-# ========== [查詢天氣（自動補全地名）] ==========
+# ====== 天氣 ======
 def weather(loc: str) -> str:
     search = DISTRICT_FULLNAME.get(loc.strip(), loc.strip())
     url = (
-        f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089"
+        f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-093"
         f"?Authorization={CWA_API_KEY}&locationName={quote(search)}"
     )
     print(f"[CWA-DEBUG] url: {url}")
@@ -89,9 +126,9 @@ def weather(loc: str) -> str:
                 f"🌡️ {minT}～{maxT}°C")
     except Exception as e:
         print("[CWA-WX-ERR]", e)
-        return f"天氣查詢失敗（{search}）"   
+        return f"天氣查詢失敗（{search}）"
 
-# ========== [查詢匯率] ==========
+# ====== 匯率 ======
 def fx():
     url = "https://rate.bot.com.tw/xrt?Lang=zh-TW"
     r = safe_get(url)
@@ -120,14 +157,14 @@ def fx():
             if len(cells) > 0:
                 name = cells[0].text.strip()
                 if name in mapping:
-                    rate = cells[2].text.strip()  # 本行現金賣出
+                    rate = cells[2].text.strip()
                     result.append(f"{flag[mapping[name]]} {mapping[name]}：{rate}")
         return "💱 今日匯率（現金賣出）\n" + "\n".join(result) if result else "查無匯率資料"
     except Exception as e:
         print("[FX-ERR]", e)
         return "匯率查詢失敗"
 
-# ========== [查詢油價] ==========
+# ====== 油價 ======
 def get_taiwan_oil_price():
     url = "https://www2.moeaea.gov.tw/oil111/Gasoline/NationwideAvg"
     try:
@@ -148,11 +185,11 @@ def get_taiwan_oil_price():
         print("[OIL-ERR]", e)
         return "油價查詢失敗"
 
-# ========== [查詢新聞] ==========
+# ====== 新聞 ======
 def news():
     sources = [
         ("台灣", "tw"),
-        ("中國", "cn"),
+        ("大陸", "cn"),
         ("國際", "us"),
     ]
     result = []
@@ -169,26 +206,26 @@ def news():
             print(f"[NEWS-{label}-ERR]", e)
     return "\n\n".join(result) if result else "今日無新聞"
 
-# ========== [查詢所有台股資訊（全名對照表內台股）] ==========
-def stock_all_tw():
-    results = []
-    for name, code in STOCK.items():
-        if code.endswith(".TW") or code=="^TWII":
-            res = stock(name)
-            results.append(res)
-    return "\n".join(results)
+# ====== 台/美股（多檔顯示） ======
+def stock_all():
+    msg = []
+    # 台股
+    for name in ["台積電","聯電","鴻準","仁寶","陽明","華航","長榮航","00918","00878","元大美債20年","群益25年美債","大盤"]:
+        msg.append(stock(name))
+    # 美股
+    for name in ["輝達","美超微","Google","蘋果"]:
+        msg.append(stock(name))
+    return "\n".join(msg)
 
-# ========== [查詢單一股票] ==========
 def stock(name: str) -> str:
     code = STOCK.get(name, name)
-    # 台股
-    if code.endswith(".TW") or code=="^TWII":
-        sym = code.replace(".TW", "").zfill(4) if code!="^TWII" else code
+    if code.endswith(".TW"):
+        sym = code.replace(".TW", "").zfill(4)
         url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_AVG_ALL"
         r = safe_get(url)
         data = r.json() if r else []
         for row in data:
-            if (row.get('證券代號') == sym) or (sym=="^TWII" and row.get('證券代號')==sym):
+            if row.get('證券代號') == sym:
                 price = row.get('收盤價')
                 if price and price != '--':
                     return f"📈 {name}（台股）\n💰 {price}（收盤價）"
@@ -212,7 +249,7 @@ def stock(name: str) -> str:
         print("[YF-ERR]", code, e)
         return f"❌ {name}（美股） 查詢失敗"
 
-# ========== [查詢行事曆] ==========
+# ====== 行事曆 ======
 def cal():
     if not GOOGLE_CREDS_JSON_B64: return "行事曆查詢失敗"
     try:
@@ -228,10 +265,10 @@ def cal():
         print("[CAL-ERR]", e)
         return "行事曆查詢失敗"
 
-# ========== [查詢美股行情] ==========
+# ====== 美股前一晚摘要 ======
 def us():
     idx = {"道瓊": ".DJI", "S&P500": ".INX", "NASDAQ": ".IXIC"}
-    focus = {"NVDA":"輝達", "SMCI":"美超微", "GOOGL":"Google", "AAPL":"蘋果"}
+    focus = {"NVDA": "輝達", "SMCI": "美超微", "GOOGL": "Google", "AAPL": "蘋果"}
     lines = []
     idx_miss = 0
     def q(code, name):
@@ -256,108 +293,114 @@ def us():
         return "📈 前一晚美股行情\n今日美股休市（或暫無行情）\n" + "\n".join(focus_lines)
     return "📈 前一晚美股行情\n" + "\n".join(idx_lines) + "\n" + "\n".join(focus_lines)
 
-# ========== [主動推播 LINE 訊息] ==========
-def push(msg):
-    print("[PUSH]", msg)  # log
+# ====== LINE 推播 ======
+def push(msg): 
+    print("[LINE-PUSH]\n", msg)
+    line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=msg.strip()))
+
+def safe_run(fn, *args, **kwargs):
     try:
-        line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=msg.strip()))
+        return fn(*args, **kwargs)
     except Exception as e:
-        print("[PUSH-ERR]", e)
+        return f"{fn.__name__} 查詢失敗"
 
-def keep_alive():
-    print("[KEEP-ALIVE] 活著")
-
-# ========== [排程工作，每個都加註解] ==========
-
-def job_morning():
-    """07:10 早安推播：天氣、新聞、行事曆、匯率、前晚美股行情"""
-    print("[SCHEDULE] 07:10 morning_briefing")
-    msg = "\n".join([
-        weather("中山區"),
+# ====== 定時推播任務（時間皆為 Asia/Taipei） ======
+def morning_briefing():
+    msg = [
+        "【早安】",
+        weather("新店區"),
         news(),
         cal(),
         fx(),
-        us()
-    ])
-    push("【早安推播】\n"+msg)
+        us(),
+        # 不再顯示 stock_all()
+    ]
+    push("\n\n".join(msg))
 
-def job_commute():
-    """08:00 上班通勤推播（中山區天氣）"""
-    print("[SCHEDULE] 08:00 commute_to_work")
-    msg = weather("中山區")
-    push("【上班通勤推播】\n"+msg)
+def commute_to_work():
+    msg = [
+        "【通勤提醒/中山區】",
+        weather("中山區"),
+        traffic_route("家到公司")
+    ]
+    push("\n\n".join(msg))
 
-def job_market_open():
-    """09:30 台股開盤（所有台股）"""
-    print("[SCHEDULE] 09:30 market_open")
-    msg = stock_all_tw()
-    push("【台股開盤】\n"+msg)
+def market_open():
+    msg = [
+        "【台股開盤】",
+        stock_all()
+    ]
+    push("\n\n".join(msg))
 
-def job_market_mid():
-    """12:00 台股盤中快訊（所有台股）"""
-    print("[SCHEDULE] 12:00 market_mid")
-    msg = stock_all_tw()
-    push("【台股盤中快訊】\n"+msg)
+def market_mid():
+    msg = [
+        "【台股盤中快訊】",
+        stock_all()
+    ]
+    push("\n\n".join(msg))
 
-def job_market_close():
-    """13:45 台股收盤（所有台股）"""
-    print("[SCHEDULE] 13:45 market_close")
-    msg = stock_all_tw()
-    push("【台股收盤】\n"+msg)
+def market_close():
+    msg = [
+        "【台股收盤】",
+        stock_all()
+    ]
+    push("\n\n".join(msg))
 
-def job_evening_zhongzheng():
-    """17:30 下班推播（週一三五：中正區天氣+油價+打球提醒）"""
-    print("[SCHEDULE] 17:30 evening_zhongzheng")
-    msg = "\n".join([
-        "下班提醒（中正區打球日）！",
+def evening_zhongzheng():
+    msg = [
+        "【下班打球提醒/中正區】",
         weather("中正區"),
-        get_taiwan_oil_price()
-    ])
-    push("【下班推播】\n"+msg)
+        get_taiwan_oil_price(),
+        traffic_route("公司到中正區")
+    ]
+    push("\n\n".join(msg))
 
-def job_evening_xindian():
-    """17:30 下班推播（週二四：新店區天氣+油價+打球提醒）"""
-    print("[SCHEDULE] 17:30 evening_xindian")
-    msg = "\n".join([
-        "下班提醒（新店區打球日）！",
+def evening_xindian():
+    msg = [
+        "【回家/新店區】",
         weather("新店區"),
-        get_taiwan_oil_price()
-    ])
-    push("【下班推播】\n"+msg)
+        get_taiwan_oil_price(),
+        traffic_route("公司到家")
+    ]
+    push("\n\n".join(msg))
 
-def job_us_market_open1():
-    """21:30 美股開盤速報"""
-    print("[SCHEDULE] 21:30 us_market_open1")
-    msg = us()
-    push("【美股開盤速報】\n"+msg)
+def us_market_open1():
+    msg = [
+        "【美股開盤速報】",
+        us()
+    ]
+    push("\n\n".join(msg))
 
-def job_us_market_open2():
-    """23:00 美股行情"""
-    print("[SCHEDULE] 23:00 us_market_open2")
-    msg = us()
-    push("【美股行情】\n"+msg)
+def us_market_open2():
+    msg = [
+        "【美股行情更新】",
+        us()
+    ]
+    push("\n\n".join(msg))
 
-# ========== [排程設定] ==========
-scheduler = BackgroundScheduler(timezone=tz)
-scheduler.add_job(job_morning,           CronTrigger(hour=7, minute=10))
-scheduler.add_job(job_commute,           CronTrigger(day_of_week='0-4', hour=8, minute=0))
-scheduler.add_job(job_market_open,       CronTrigger(day_of_week='0-4', hour=9, minute=30))
-scheduler.add_job(job_market_mid,        CronTrigger(day_of_week='0-4', hour=12, minute=0))
-scheduler.add_job(job_market_close,      CronTrigger(day_of_week='0-4', hour=13, minute=45))
-scheduler.add_job(job_evening_zhongzheng,CronTrigger(day_of_week='0,2,4', hour=17, minute=30))
-scheduler.add_job(job_evening_xindian,   CronTrigger(day_of_week='1,3', hour=17, minute=30))
-scheduler.add_job(job_us_market_open1,   CronTrigger(day_of_week='0-4', hour=21, minute=30))
-scheduler.add_job(job_us_market_open2,   CronTrigger(day_of_week='0-4', hour=23, minute=0))
-# 保活
-scheduler.add_job(keep_alive,            CronTrigger(minute='0,10,20,30,40,45,50'))
+def keep_alive():
+    print(f"[Scheduler] 定時喚醒維持運作 {datetime.now(tz)}")
+
+# ====== Scheduler 設定 ======
+scheduler = BackgroundScheduler(timezone="Asia/Taipei")
+scheduler.add_job(keep_alive,         CronTrigger(minute="0,10,20,30,40,45,50"))
+scheduler.add_job(morning_briefing,   CronTrigger(hour=7, minute=10))
+scheduler.add_job(commute_to_work,    CronTrigger(hour=8, minute=0, day_of_week='mon-fri'))
+scheduler.add_job(market_open,        CronTrigger(hour=9, minute=30, day_of_week='mon-fri'))
+scheduler.add_job(market_mid,         CronTrigger(hour=12, minute=0, day_of_week='mon-fri'))
+scheduler.add_job(market_close,       CronTrigger(hour=13, minute=45, day_of_week='mon-fri'))
+scheduler.add_job(evening_zhongzheng, CronTrigger(hour=18, minute=0, day_of_week='mon,wed,fri'))
+scheduler.add_job(evening_xindian,    CronTrigger(hour=18, minute=0, day_of_week='tue,thu'))
+scheduler.add_job(us_market_open1,    CronTrigger(hour=21, minute=30, day_of_week='mon-fri'))
+scheduler.add_job(us_market_open2,    CronTrigger(hour=23, minute=0, day_of_week='mon-fri'))
 scheduler.start()
 
-# ========== [API 測試路徑] ==========
+# ====== 測試/健康檢查/Webhook ======
 @app.route("/callback", methods=["POST"])
 def callback():
     try:
         handler.handle(request.get_data(as_text=True), request.headers.get("X-Line-Signature"))
-    except InvalidSignatureError:
+    except Exception:
         abort(400)
     return "OK"
 
@@ -365,7 +408,7 @@ def callback():
 def home():
     return "✅ LINE Bot 正常運作中"
 
-@app.route("/test_weather", methods=["GET"])
+@app.route("/test_weather")
 def test_weather():
     loc = request.args.get("loc", "新北市新店區")
     return weather(loc)
@@ -380,7 +423,7 @@ def test_fx():
 
 @app.route("/test_stock")
 def test_stock():
-    return stock_all_tw()
+    return stock_all()
 
 @app.route("/test_us")
 def test_us():
@@ -391,7 +434,4 @@ def health():
     return "OK"
 
 if __name__ == "__main__":
-    print("[TEST] 台股資訊", stock_all_tw())
-    print("[TEST] 美股行情", us())
-    print(get_taiwan_oil_price())
     app.run(host="0.0.0.0", port=10000)
