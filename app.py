@@ -49,6 +49,13 @@ def safe_get(url, timeout=12):
         return None
 
 # ==== 天氣查詢 ====
+DISTRICT_FULLNAME = {
+    "新店": "新北市新店區",
+    "新店區": "新北市新店區",
+    "中山": "台北市中山區",
+    "中山區": "台北市中山區",
+    # 其他常用簡稱都可以列在這
+}
 def weather(loc: str) -> str:
     """
     查詢中央氣象署 F-D0047-089，支援任意地區名稱（如：新店、中山區、台北市信義區）。
@@ -93,6 +100,10 @@ def weather(loc: str) -> str:
                 f"濕度：{rh}%／降雨 {pop}%")
     except Exception as e:
         print("[CWA-WX-ERR]", e)
+        print("[DEBUG] url =", url)
+        print("[DEBUG] status =", r.status_code)
+        print("[DEBUG] data =", data)
+
         return f"天氣查詢失敗（{loc}）"
 
 # ==== 匯率查詢 ====
