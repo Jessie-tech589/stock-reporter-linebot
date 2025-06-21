@@ -57,54 +57,20 @@ DISTRICT_FULLNAME = {
     # 其他常用簡稱都可以列在這
 }
 def weather(loc: str) -> str:
-    """
-    查詢中央氣象署 F-D0047-089，支援任意地區名稱（如：新店、中山區、台北市信義區）。
-    """
-    if not CWA_API_KEY:
-        return "【系統未設定CWA_API_KEY】"
-    # 拉一次全台資料（行政區超過200筆，不用再找locationId）
-    url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089?Authorization={CWA_API_KEY}&format=JSON"
+    ...
+    print(f"[CWA-DEBUG] url: {url}")
     try:
-        r = requests.get(url, timeout=12)
+        r = requests.get(url, timeout=10)
+        print(f"[CWA-DEBUG] status: {r.status_code}")
         data = r.json()
-        locations = data["records"]["Locations"][0]["Location"]
-        # 支援多種寫法：去掉市/縣/區等
-        loc_simple = loc.replace("台北市", "").replace("新北市", "").replace("台中市", "").replace("市", "").replace("區", "").strip()
-        hit = None
-        for l in locations:
-            n = l["LocationName"]
-            if loc_simple in n:
-                hit = l
-                break
-        if not hit:
-            return f"天氣查詢失敗（{loc}）"
-        now = datetime.now()
-        def get_val(el_name, idx=0):
-            el = next((e for e in hit["WeatherElement"] if e["ElementName"] == el_name), None)
-            if not el: return None
-            for t in el["Time"]:
-                t0 = t.get("DataTime") or t.get("StartTime")
-                tdt = datetime.fromisoformat(t0.replace("Z", "+08:00"))
-                if tdt >= now:
-                    return t["ElementValue"][idx]["Value"]
-            return None
-        wx   = get_val("天氣現象") or ""
-        pop  = get_val("降雨機率") or "?"
-        temp = get_val("溫度") or "?"
-        app  = get_val("體感溫度") or "?"
-        rh   = get_val("相對濕度") or "?"
-        area = hit["LocationName"]
-        return (f"🌦️ {area}\n"
-                f"{wx}\n"
-                f"溫度：{temp}°C／體感：{app}°C\n"
-                f"濕度：{rh}%／降雨 {pop}%")
+        print(f"[CWA-DEBUG] data: {data}")    # 這一行一定要加！
+        # ---- 以下原本的解析程式 ----
+        locations = data.get("records", {}).get("locations", [])
+        ...
     except Exception as e:
         print("[CWA-WX-ERR]", e)
-        print("[DEBUG] url =", url)
-        print("[DEBUG] status =", r.status_code)
-        print("[DEBUG] data =", data)
-
         return f"天氣查詢失敗（{loc}）"
+
 
 # ==== 匯率查詢 ====
 def fx():
