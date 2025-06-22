@@ -12,6 +12,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from urllib.parse import quote_plus
 
 # ========== 環境變數 ==========
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
@@ -268,11 +269,21 @@ def us():
     return "📊 前一晚美股行情\n" + "\n".join(idx_lines) + "\n" + "\n".join(focus_lines)
 
 # ========== Google Maps 路況 ==========
+
 def traffic(label):
     cfg = ROUTE_CONFIG[label]
     o, d = cfg['o'], cfg['d']
     waypoints = "|".join(cfg['waypoints'])
-    url = f"https://maps.googleapis.com/maps/api/directions/json?origin={o}&destination={d}&waypoints={waypoints}&key={GOOGLE_MAPS_API_KEY}&departure_time=now&language=zh-TW"
+    
+    o_encoded = quote_plus(o)
+    d_encoded = quote_plus(d)
+    waypoints_encoded = quote_plus(waypoints)
+    
+    url = (
+        f"https://maps.googleapis.com/maps/api/directions/json?"
+        f"origin={o_encoded}&destination={d_encoded}&waypoints={waypoints_encoded}"
+        f"&key={GOOGLE_MAPS_API_KEY}&departure_time=now&language=zh-TW"
+    )
     try:
         r = requests.get(url, timeout=10)
         js = r.json()
@@ -282,9 +293,9 @@ def traffic(label):
         steps = routes[0]["legs"][0]["steps"]
         traffic_info = []
         for step in steps:
-            road = step["html_instructions"].replace("<b>","").replace("</b>","")
-            duration = step.get("duration",{}).get("value",0)
-            traffic_duration = step.get("duration_in_traffic",{}).get("value",duration)
+            road = step["html_instructions"].replace("<b>", "").replace("</b>", "")
+            duration = step.get("duration", {}).get("value", 0)
+            traffic_duration = step.get("duration_in_traffic", {}).get("value", duration)
             if traffic_duration > duration * 1.3:
                 color = TRAFFIC_EMOJI["RED"]
             elif traffic_duration > duration * 1.1:
@@ -292,12 +303,13 @@ def traffic(label):
             else:
                 color = TRAFFIC_EMOJI["GREEN"]
             traffic_info.append(f"{color} {road}")
-        summary = js['routes'][0].get("summary","")
+        summary = js['routes'][0].get("summary", "")
         duration = js['routes'][0]["legs"][0]["duration_in_traffic"]["text"]
         return f"🚗 路線: {summary}\n預估時間: {duration}\n" + "\n".join(traffic_info)
     except Exception as e:
         print("[TRAFFIC-ERR]", e)
         return "路況查詢失敗"
+
 
 # ========== LINE 推播 ==========
 def push(message):
