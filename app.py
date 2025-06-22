@@ -13,6 +13,7 @@ from apscheduler.triggers.cron import CronTrigger
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from urllib.parse import quote_plus
+from bs4 import BeautifulSoup
 
 # ========== 環境變數 ==========
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
@@ -156,19 +157,38 @@ def fx():
 
 # ========== 油價 ==========
 def get_taiwan_oil_price():
-    url = "https://www2.moeaea.gov.tw/oil111/Gasoline/NationwideAvg"
+    url = "https://vipmbr.cpc.com.tw/mbwebs/mbwebs/ShowHistoryPrice"
     try:
         r = requests.get(url, timeout=10)
-        data = r.json()
-        today = data['nationwideAvgList'][0]
-        return (f"⛽ 油價（{today['announceDate']}）\n"
-                f"92無鉛: {today['gasoline92']} 元\n"
-                f"95無鉛: {today['gasoline95']} 元\n"
-                f"98無鉛: {today['gasoline98']} 元\n"
-                f"超級柴油: {today['diesel']} 元")
+        r.encoding = "utf-8"  # 確保中文
+        soup = BeautifulSoup(r.text, "html.parser")
+        table = soup.find("table", class_="tablePrice")  # 中油頁面固定 class
+
+        rows = table.find_all("tr")
+        if len(rows) < 2:
+            return "⛽️ 油價查詢失敗"
+
+        cols = rows[1].find_all("td")
+        if len(cols) < 5:
+            return "⛽️ 油價查詢失敗"
+
+        gas_92 = cols[1].text.strip()
+        gas_95 = cols[2].text.strip()
+        gas_98 = cols[3].text.strip()
+        diesel = cols[4].text.strip()
+
+        price_str = (
+            f"⛽️ 最新油價：\n"
+            f"92無鉛: {gas_92} 元\n"
+            f"95無鉛: {gas_95} 元\n"
+            f"98無鉛: {gas_98} 元\n"
+            f"柴油: {diesel} 元"
+        )
+        return price_str
     except Exception as e:
-        print("[OIL-ERR]", e)
-        return "油價查詢失敗"
+        print("[GAS-ERR]", e)
+        return "⛽️ 油價查詢失敗"
+
 
 # ========== 新聞 ==========
 def news():
