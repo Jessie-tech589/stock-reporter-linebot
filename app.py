@@ -144,13 +144,15 @@ def weather_accu(city, lat, lon):
 def fx():
     url = "https://rate.bot.com.tw/xrt?Lang=zh-TW"
     try:
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(requests.get(url).text, "lxml")
+        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        soup = BeautifulSoup(r.text, "lxml")
         table = soup.find("table")
         rows = table.find_all("tr")
         mapping = {
-            "美元 (USD)": ("USD","🇺🇸"), "日圓 (JPY)": ("JPY","🇯🇵"),
-            "人民幣 (CNY)": ("CNY","🇨🇳"), "港幣 (HKD)": ("HKD","🇭🇰"),
+            "美元 (USD)": ("USD","🇺🇸"),
+            "日圓 (JPY)": ("JPY","🇯🇵"),
+            "人民幣 (CNY)": ("CNY","🇨🇳"),
+            "港幣 (HKD)": ("HKD","🇭🇰"),
         }
         result = []
         for row in rows:
@@ -168,36 +170,30 @@ def fx():
 def get_taiwan_oil_price():
     url = "https://vipmbr.cpc.com.tw/mbwebs/mbwebs/ShowHistoryPrice"
     try:
-        r = requests.get(url, timeout=10)
-        r.encoding = "utf-8"  # 確保中文
+        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        r.encoding = "utf-8"
         soup = BeautifulSoup(r.text, "html.parser")
-        table = soup.find("table", class_="tablePrice")  # 中油頁面固定 class
-
+        table = soup.find("table", class_="tablePrice")
         rows = table.find_all("tr")
         if len(rows) < 2:
             return "⛽️ 油價查詢失敗"
-
         cols = rows[1].find_all("td")
         if len(cols) < 5:
             return "⛽️ 油價查詢失敗"
-
         gas_92 = cols[1].text.strip()
         gas_95 = cols[2].text.strip()
         gas_98 = cols[3].text.strip()
         diesel = cols[4].text.strip()
-
-        price_str = (
+        return (
             f"⛽️ 最新油價：\n"
             f"92無鉛: {gas_92} 元\n"
             f"95無鉛: {gas_95} 元\n"
             f"98無鉛: {gas_98} 元\n"
             f"柴油: {diesel} 元"
         )
-        return price_str
     except Exception as e:
         print("[GAS-ERR]", e)
         return "⛽️ 油價查詢失敗"
-
 
 # ========== 新聞 ==========
 def news():
@@ -278,25 +274,42 @@ def cal():
 
 # ========== 美股前一晚行情 ==========
 def us():
-    idx = {"道瓊": ".DJI", "S&P500": ".INX", "NASDAQ": ".IXIC"}
-    focus = {"NVDA":"輝達", "SMCI":"美超微", "GOOGL":"Google", "AAPL":"蘋果"}
-    def q(code, name):
+    idx = {
+        "道瓊": "^DJI",
+        "S&P500": "^GSPC",
+        "NASDAQ": "^IXIC"
+    }
+    focus = {
+        "NVDA": "輝達",
+        "SMCI": "美超微",
+        "GOOGL": "Google",
+        "AAPL": "蘋果"
+    }
+
+    def q_yf(code, name):
         try:
-            url = f"https://finnhub.io/api/v1/quote?symbol={code}&token={FINNHUB_API_KEY}"
-            r = requests.get(url, timeout=10)
-            data = r.json()
-            c = data.get("c"); pc = data.get("pc")
-            if c and pc:
-                diff = c - pc
-                pct = diff / pc * 100 if pc else 0
+            import yfinance as yf
+            tkr = yf.Ticker(code)
+            price = tkr.fast_info.get("last_price")
+            prev  = tkr.fast_info.get("previous_close")
+            if price is None or prev is None:
+                info = tkr.info
+                price = info.get("regularMarketPrice")
+                prev  = info.get("previousClose")
+            if price and prev:
+                diff = price - prev
+                pct = diff / prev * 100 if prev else 0
                 emo = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
-                return f"{emo} {name}: {c:.2f} ({diff:+.2f},{pct:+.2f}%)"
+                return f"{emo} {name}: {price:.2f} ({diff:+.2f},{pct:+.2f}%)"
         except Exception as e:
-            print("[FINNHUB-ERR]", code, e)
+            print("[YF-ERR]", code, e)
         return f"❌ {name}: 查無資料"
-    idx_lines = [q(c, n) for n, c in idx.items()]
-    focus_lines = [q(c, n) for c, n in focus.items()]
+
+    idx_lines = [q_yf(c, n) for n, c in idx.items()]
+    focus_lines = [q_yf(c, n) for c, n in focus.items()]
+
     return "📊 前一晚美股行情\n" + "\n".join(idx_lines) + "\n" + "\n".join(focus_lines)
+
 
 # ========== Google Maps 路況 ==========
 
@@ -468,6 +481,36 @@ def test_cal():
 @app.route("/test_us")
 def test_us():
     return us()
+
+@app.route("/send_scheduled_test")
+def send_scheduled_test():
+    time_str = request.args.get("time", "").strip()
+    print(f"[TEST] 模擬排程時間：{time_str}")
+    if time_str == "07:10":
+        morning_briefing()
+    elif time_str == "08:00":
+        commute_to_work()
+    elif time_str == "09:30":
+        market_open()
+    elif time_str == "12:00":
+        market_mid()
+    elif time_str == "13:45":
+        market_close()
+    elif time_str == "18:00":
+        # 判斷星期
+        weekday = datetime.now(tz).weekday()
+        if weekday in [0,2,4]:  # Mon Wed Fri
+            evening_zhongzheng()
+        else:  # Tue Thu
+            evening_xindian()
+    elif time_str == "21:30":
+        us_market_open1()
+    elif time_str == "23:00":
+        us_market_open2()
+    else:
+        return f"❌ 不支援時間 {time_str}"
+    return f"✅ 模擬推播 {time_str} 完成"
+
 
 @app.route("/health")
 def health():
