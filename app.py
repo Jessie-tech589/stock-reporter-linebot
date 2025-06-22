@@ -2,6 +2,7 @@ import os
 import base64
 import json
 import requests
+import yfinance as yf
 from datetime import datetime, timedelta, date
 import pytz
 from flask import Flask, request, abort
@@ -52,6 +53,14 @@ STOCK = {
     "輝達":"NVDA","美超微":"SMCI","GOOGL":"GOOGL","Google":"GOOGL",
     "蘋果":"AAPL","特斯拉":"TSLA","微軟":"MSFT"
 }
+
+# ========== 股票清單 ==========
+
+# 台股固定清單（早上 / 中午 / 收盤用）
+stock_list_tpex = [
+    "台積電","聯電","鴻準","仁寶","陽明","華航","長榮航",
+    "00918","00878","元大美債20年","群益25年美債","大盤"
+]
 
 # ========== 路線對照 ==========
 ROUTE_CONFIG = {
@@ -211,6 +220,7 @@ def news():
     return "\n\n".join(result) if result else "今日無新聞"
 
 # ========== 股票 ==========
+
 def stock(name: str) -> str:
     code = STOCK.get(name, name)
     if code.endswith(".TW"):
@@ -248,7 +258,7 @@ def stock(name: str) -> str:
         return f"❌ {name}（美股） 查詢失敗"
 
 def stock_all():
-    return "\n".join(stock(x) for x in ["台積電","聯電","鴻準","仁寶","陽明","華航","長榮航","00918","00878","元大美債20年","群益25年美債","大盤"])
+    return "\n".join(stock(name) for name in stock_list_tpex)
 
 # ========== 行事曆 ==========
 def cal():
@@ -363,18 +373,18 @@ def commute_to_work():
 
 def market_open():
     print(f"[Scheduler] 排程觸發時間：{datetime.now()}，任務：market_open")
-    msg = ["【台股開盤】"] + [stock(k) for k in STOCK if k != "大盤"]
+    msg = ["【台股開盤】"] + [stock(name) for name in stock_list_tpex]
     push("\n\n".join(msg))
 
 def market_mid():
     print(f"[Scheduler] 排程觸發時間：{datetime.now()}，任務：market_mid")
-    msg = ["【台股盤中快訊】"] + [stock(x) for x in ["台積電","聯電","鴻準","仁寶","陽明","大盤"]]
-    push("\n".join(msg))
+    msg = ["【台股盤中快訊】"] + [stock(name) for name in stock_list_tpex]
+    push("\n\n".join(msg))
 
 def market_close():
     print(f"[Scheduler] 排程觸發時間：{datetime.now()}，任務：market_close")
-    msg = ["【台股收盤】"] + [stock(x) for x in ["台積電","聯電","鴻準","仁寶","陽明","大盤"]]
-    push("\n".join(msg))
+    msg = ["【台股收盤】"] + [stock(name) for name in stock_list_tpex]
+    push("\n\n".join(msg))
 
 def evening_zhongzheng():
     msg = [
