@@ -15,6 +15,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
+from apscheduler.schedulers.background import BackgroundScheduler
 
 # ========== 環境變數 ==========
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
