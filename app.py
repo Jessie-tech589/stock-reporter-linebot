@@ -186,8 +186,6 @@ def get_taiwan_oil_price():
             f"⛽️ 最新油價：\n"
             f"92無鉛: {gas_92} 元\n"
             f"95無鉛: {gas_95} 元\n"
-            f"98無鉛: {gas_98} 元\n"
-            f"柴油: {diesel} 元"
         )
     except Exception as e:
         print("[GAS-ERR]", e)
