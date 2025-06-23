@@ -49,17 +49,15 @@ LOCATION_COORDS = {
 STOCK = {
     "台積電": "2330.TW", "聯電": "2303.TW", "鴻準": "2354.TW", "仁寶": "2324.TW",
     "陽明": "2609.TW", "華航": "2610.TW", "長榮航": "2618.TW",
-    "00918": "00918.TW", "00878": "00878.TW",
-    "元大美債20年": "00679B.TW", "群益25年美債": "00723B.TW",
     "大盤": "^TWII",
     "輝達": "NVDA", "美超微": "SMCI", "GOOGL": "GOOGL", "Google": "GOOGL",
-    "蘋果": "AAPL", "特斯拉": "TSLA", "微軟": "MSFT"
+    "微軟": "MSFT"
 }
 
 # ========== 股票清單 ==========
 stock_list_tpex = [
     "台積電", "聯電", "鴻準", "仁寶", "陽明", "華航", "長榮航",
-    "00918", "00878", "元大美債20年", "群益25年美債", "大盤"
+    "大盤"
 ]
 
 # ========== 路線對照 ==========
@@ -421,7 +419,7 @@ def keep_alive():
 
 # ========== Scheduler 啟動 ==========
 scheduler = BackgroundScheduler(timezone=tz)
-scheduler.add_job(keep_alive, CronTrigger(minute='0,10,20,30,40,50'))
+scheduler.add_job(keep_alive, CronTrigger(minute='0,10,20,30,40,45,50'))
 scheduler.add_job(morning_briefing, CronTrigger(hour=7, minute=10))
 scheduler.add_job(commute_to_work, CronTrigger(day_of_week='mon-fri', hour=8, minute=0))
 scheduler.add_job(market_open, CronTrigger(day_of_week='mon-fri', hour=9, minute=30))
