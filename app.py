@@ -202,11 +202,13 @@ def news():
     for label, code in sources:
         url = f"https://newsapi.org/v2/top-headlines?country={code}&apiKey={NEWS_API_KEY}"
         try:
-            data = requests.get(url).json()
+            r = requests.get(url)
+            print(f"[NEWS-{label}-RESP] {r.text}")  # 印出回傳內容
+            data = r.json()
             if data.get("status") == "ok":
                 arts = [a["title"] for a in data.get("articles", []) if a.get("title")][:3]
                 if arts:
-                    result.append(f"📰【{label}】" + "\n" + "\n".join("• " + t for t in arts))
+                    result.append(f"📰【{label}】\n" + "\n".join("• " + t for t in arts))
         except Exception as e:
             print(f"[NEWS-{label}-ERR]", e)
     return "\n\n".join(result) if result else "今日無新聞"
@@ -248,7 +250,11 @@ def stock(name: str) -> str:
         return f"❌ {name}（美股） 查詢失敗"
 
 def stock_all():
-    return "\n".join(stock(name) for name in stock_list_tpex)
+    result = []
+    for name in stock_list_tpex:
+        result.append(stock(name))
+        time.sleep(1)  # 每次查完睡 1 秒
+    return "\n".join(result)
 
 # ========== 行事曆 ==========
 def cal():
@@ -302,42 +308,49 @@ def us():
 
 # ========== Google Maps 路況 ==========
 def traffic(label):
+    """
+    查詢指定路線的即時路況與預估時間
+    :param label: 路線名稱（如 "家到公司"）
+    :return: 路況資訊字串
+    """
+    if label not in ROUTE_CONFIG:
+        return f"🚗 找不到路線 {label}"
     cfg = ROUTE_CONFIG[label]
     o, d = cfg['o'], cfg['d']
-    waypoints = "|".join(cfg['waypoints'])
+    # 建議用 via: 前綴，避免多段 legs 導致 duration_in_traffic 為空
+    waypoints = "|".join(f"via:{w}" for w in cfg['waypoints']) if cfg.get('waypoints') else ""
     o_encoded = quote_plus(o)
     d_encoded = quote_plus(d)
     waypoints_encoded = quote_plus(waypoints)
     url = (
         f"https://maps.googleapis.com/maps/api/directions/json?"
-        f"origin={o_encoded}&destination={d_encoded}&waypoints={waypoints_encoded}"
+        f"origin={o_encoded}&destination={d_encoded}"
+        f"{'&waypoints=' + waypoints_encoded if waypoints else ''}"
         f"&key={GOOGLE_MAPS_API_KEY}&departure_time=now&language=zh-TW"
     )
     try:
+        print(f"[TRAFFIC] 查詢時間：{datetime.now(tz)}，路線：{label}")
         r = requests.get(url, timeout=10)
         js = r.json()
         routes = js.get("routes", [])
         if not routes:
-            return "🚗 路況查詢失敗"
-        steps = routes[0]["legs"][0]["steps"]
-        traffic_info = []
-        for step in steps:
-            road = step["html_instructions"].replace("<b>", "").replace("</b>", "")
-            duration = step.get("duration", {}).get("value", 0)
-            traffic_duration = step.get("duration_in_traffic", {}).get("value", duration)
-            if traffic_duration > duration * 1.3:
-                color = TRAFFIC_EMOJI["RED"]
-            elif traffic_duration > duration * 1.1:
-                color = TRAFFIC_EMOJI["YELLOW"]
-            else:
-                color = TRAFFIC_EMOJI["GREEN"]
-            traffic_info.append(f"{color} {road}")
-        summary = js['routes'][0].get("summary", "")
-        duration = js['routes'][0]["legs"][0]["duration_in_traffic"]["text"]
-        return f"🚗 路線: {summary}\n預估時間: {duration}\n" + "\n".join(traffic_info)
+            print("[TRAFFIC-ERR] 無有效路線")
+            return "🚗 路況查詢失敗（無有效路線）"
+        legs = routes[0].get("legs", [])
+        if not legs:
+            print("[TRAFFIC-ERR] 無有效路段")
+            return "🚗 路況查詢失敗（無有效路段）"
+        # 取得第一段行程時間（若有多段，請自行加總或逐一顯示）
+        duration = legs[0].get('duration_in_traffic', legs[0].get('duration', {}))
+        duration_text = duration.get('text', 'N/A')
+        summary = routes[0].get("summary", "")
+        # 若有多段，可自行加總或逐一顯示
+        # 這裡只顯示第一段時間與路線名稱
+        return f"🚗 路線: {summary}\n預估時間: {duration_text}"
     except Exception as e:
         print("[TRAFFIC-ERR]", e)
-        return "路況查詢失敗"
+        return "🚗 路況查詢失敗"
+
 
 # ========== LINE 推播 ==========
 def push(message):
