@@ -32,7 +32,7 @@ CWA_API_KEY = os.getenv("CWA_API_KEY", WEATHER_API_KEY)
 ACCUWEATHER_API_KEY = os.getenv("ACCUWEATHER_API_KEY")
 
 # ========== 台灣時區 ==========
-#tz = pytz.timezone("Asia/Taipei")
+tz = pytz.timezone("Asia/Taipei")
 
 app = Flask(__name__)
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
