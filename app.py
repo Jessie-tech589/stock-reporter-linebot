@@ -3,19 +3,16 @@ import base64
 import json
 import requests
 import yfinance as yf
-from datetime import datetime, timedelta, date
-import pytz
+from datetime import datetime, date
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
-from apscheduler.schedulers.background import BackgroundScheduler
+import time
 
 # ========== 環境變數 ==========
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
@@ -23,22 +20,15 @@ LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 LINE_USER_ID = os.getenv("LINE_USER_ID")
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
-NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
 GOOGLE_CREDS_JSON_B64 = os.getenv("GOOGLE_CREDS_JSON")
 GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
-FUGLE_API_KEY = os.getenv("FUGLE_API_KEY")
-FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY")
-CWA_API_KEY = os.getenv("CWA_API_KEY", WEATHER_API_KEY)
 ACCUWEATHER_API_KEY = os.getenv("ACCUWEATHER_API_KEY")
-
-# ========== 台灣時區 ==========
-tz = pytz.timezone("Asia/Taipei")
 
 app = Flask(__name__)
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# ========== 經緯度設定 ==========
 LOCATION_COORDS = {
     "新店區": (24.972, 121.539),
     "中山區": (25.063, 121.526),
@@ -46,7 +36,6 @@ LOCATION_COORDS = {
     "大安區": (25.033, 121.543),
 }
 
-# ========== STOCK MAPPING ==========
 STOCK = {
     "台積電": "2330.TW", "聯電": "2303.TW", "鴻準": "2354.TW", "仁寶": "2324.TW",
     "陽明": "2609.TW", "華航": "2610.TW", "長榮航": "2618.TW",
@@ -54,14 +43,10 @@ STOCK = {
     "輝達": "NVDA", "美超微": "SMCI", "GOOGL": "GOOGL", "Google": "GOOGL",
     "微軟": "MSFT"
 }
-
-# ========== 股票清單 ==========
 stock_list_tpex = [
-    "台積電", "聯電", "鴻準", "仁寶", "陽明", "華航", "長榮航",
-    "大盤"
+    "台積電", "聯電", "鴻準", "仁寶", "陽明", "華航", "長榮航", "大盤"
 ]
 
-# ========== 路線對照 ==========
 ROUTE_CONFIG = {
     "家到公司": dict(
         o="新北市新店區建國路99巷", d="台北市中山區南京東路三段131號",
@@ -100,23 +85,11 @@ ROUTE_CONFIG = {
     ),
 }
 
-# ========== Emoji ==========
 WEATHER_ICON = {
     "Sunny": "☀️", "Clear": "🌕", "Cloudy": "☁️", "Partly cloudy": "⛅",
     "Rain": "🌧️", "Thunderstorm": "⛈️", "Fog": "🌫️", "Snow": "🌨️",
 }
 TRAFFIC_EMOJI = { "RED": "🔴", "YELLOW": "🟡", "GREEN": "🟢" }
-
-# =====================[API安全封裝]=====================
-def safe_get(url, timeout=10):
-    print(f"[REQ] {url}")
-    try:
-        r = requests.get(url, timeout=timeout, headers={"User-Agent":"Mozilla/5.0"})
-        print(f"[RESP] {r.status_code}")
-        return r if r.status_code==200 else None
-    except Exception as e:
-        print("[REQ-ERR]", url, e)
-        return None
 
 # ========== 天氣查詢 ==========
 def weather_accu(city, lat, lon):
@@ -173,6 +146,9 @@ def get_taiwan_oil_price():
         r.encoding = "utf-8"
         soup = BeautifulSoup(r.text, "html.parser")
         table = soup.find("table", class_="tablePrice")
+        if not table:
+            print("[GAS-HTML]", r.text[:200])
+            return "⛽️ 油價查詢失敗（找不到表格）"
         rows = table.find_all("tr")
         if len(rows) < 2:
             return "⛽️ 油價查詢失敗"
@@ -187,32 +163,44 @@ def get_taiwan_oil_price():
             f"⛽️ 最新油價：\n"
             f"92無鉛: {gas_92} 元\n"
             f"95無鉛: {gas_95} 元\n"
+            f"98無鉛: {gas_98} 元\n"
+            f"柴油: {diesel} 元"
         )
     except Exception as e:
         print("[GAS-ERR]", e)
         return "⛽️ 油價查詢失敗"
 
-# ========== 新聞 ==========
+# ========== 新聞（NewsData.io，含台灣/大陸/國際） ==========
 def news():
-    sources = [
-        ("台灣", "tw"),
-        ("大陸", "cn"),
-        ("國際", "us"),
-    ]
-    result = []
-    for label, code in sources:
-        url = f"https://newsapi.org/v2/top-headlines?country={code}&apiKey={NEWS_API_KEY}"
-        try:
-            r = requests.get(url)
-            print(f"[NEWS-{label}-RESP] {r.text}")  # 印出回傳內容
-            data = r.json()
-            if data.get("status") == "ok":
-                arts = [a["title"] for a in data.get("articles", []) if a.get("title")][:3]
-                if arts:
-                    result.append(f"📰【{label}】\n" + "\n".join("• " + t for t in arts))
-        except Exception as e:
-            print(f"[NEWS-{label}-ERR]", e)
-    return "\n\n".join(result) if result else "今日無新聞"
+    api_key = NEWSDATA_API_KEY or ""
+    url = f"https://newsdata.io/api/1/news?apikey={api_key}&country=tw,cn,us&language=zh"
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        tw_news = []
+        cn_news = []
+        intl_news = []
+        for item in data.get("results", []):
+            country = item.get("country", "")
+            title = item.get("title", "")
+            link = item.get("link", "")
+            if country == "tw":
+                tw_news.append(f"• {title}\n{link}")
+            elif country == "cn":
+                cn_news.append(f"• {title}\n{link}")
+            else:
+                intl_news.append(f"• {title}\n{link}")
+        msg = []
+        if tw_news:
+            msg.append("【台灣】\n" + "\n".join(tw_news[:3]))
+        if cn_news:
+            msg.append("【大陸】\n" + "\n".join(cn_news[:3]))
+        if intl_news:
+            msg.append("【國際】\n" + "\n".join(intl_news[:3]))
+        return "\n\n".join(msg) if msg else "今日無新聞"
+    except Exception as e:
+        print("[NEWSDATA-ERR]", e)
+        return "新聞查詢失敗"
 
 # ========== 股票 ==========
 def stock(name: str) -> str:
@@ -254,7 +242,7 @@ def stock_all():
     result = []
     for name in stock_list_tpex:
         result.append(stock(name))
-        time.sleep(1)  # 每次查完睡 1 秒
+        time.sleep(1)  # 降低被封鎖風險
     return "\n".join(result)
 
 # ========== 行事曆 ==========
@@ -265,8 +253,8 @@ def cal():
         creds=service_account.Credentials.from_service_account_info(info,scopes=["https://www.googleapis.com/auth/calendar.readonly"])
         svc=build("calendar","v3",credentials=creds,cache_discovery=False)
         today=date.today()
-        start=tz.localize(datetime.combine(today,datetime.min.time())).isoformat()
-        end =tz.localize(datetime.combine(today,datetime.max.time())).isoformat()
+        start=datetime.combine(today,datetime.min.time()).isoformat()
+        end =datetime.combine(today,datetime.max.time()).isoformat()
         items=svc.events().list(calendarId=GOOGLE_CALENDAR_ID,timeMin=start,timeMax=end,singleEvents=True,orderBy="startTime",maxResults=10).execute().get("items",[])
         return "\n".join("🗓️ "+e["summary"] for e in items if e.get("summary")) or "今日無行程"
     except Exception as e:
@@ -309,16 +297,10 @@ def us():
 
 # ========== Google Maps 路況 ==========
 def traffic(label):
-    """
-    查詢指定路線的即時路況與預估時間
-    :param label: 路線名稱（如 "家到公司"）
-    :return: 路況資訊字串
-    """
     if label not in ROUTE_CONFIG:
         return f"🚗 找不到路線 {label}"
     cfg = ROUTE_CONFIG[label]
     o, d = cfg['o'], cfg['d']
-    # 建議用 via: 前綴，避免多段 legs 導致 duration_in_traffic 為空
     waypoints = "|".join(f"via:{w}" for w in cfg['waypoints']) if cfg.get('waypoints') else ""
     o_encoded = quote_plus(o)
     d_encoded = quote_plus(d)
@@ -330,28 +312,21 @@ def traffic(label):
         f"&key={GOOGLE_MAPS_API_KEY}&departure_time=now&language=zh-TW"
     )
     try:
-        print(f"[TRAFFIC] 查詢時間：{datetime.now(tz)}，路線：{label}")
         r = requests.get(url, timeout=10)
         js = r.json()
         routes = js.get("routes", [])
         if not routes:
-            print("[TRAFFIC-ERR] 無有效路線")
             return "🚗 路況查詢失敗（無有效路線）"
         legs = routes[0].get("legs", [])
         if not legs:
-            print("[TRAFFIC-ERR] 無有效路段")
             return "🚗 路況查詢失敗（無有效路段）"
-        # 取得第一段行程時間（若有多段，請自行加總或逐一顯示）
         duration = legs[0].get('duration_in_traffic', legs[0].get('duration', {}))
         duration_text = duration.get('text', 'N/A')
         summary = routes[0].get("summary", "")
-        # 若有多段，可自行加總或逐一顯示
-        # 這裡只顯示第一段時間與路線名稱
         return f"🚗 路線: {summary}\n預估時間: {duration_text}"
     except Exception as e:
         print("[TRAFFIC-ERR]", e)
         return "🚗 路況查詢失敗"
-
 
 # ========== LINE 推播 ==========
 def push(message):
@@ -361,9 +336,8 @@ def push(message):
     except Exception as e:
         print(f"[LineBot] 推播失敗：{e}")
 
-# ========== 定時排程內容 ==========
+# ========== 定時任務內容 ==========
 def morning_briefing():
-    print(f"[Scheduler] 排程觸發時間：{datetime.now(tz)}，任務：morning_briefing")
     msg = [
         "【早安】",
         weather_accu("新店區", *LOCATION_COORDS["新店區"]),
@@ -375,7 +349,6 @@ def morning_briefing():
     push("\n\n".join(msg))
 
 def commute_to_work():
-    print(f"[Scheduler] 排程觸發時間：{datetime.now(tz)}，任務：commute_to_work")
     msg = [
         "【通勤提醒/中山區】",
         weather_accu("中山區", *LOCATION_COORDS["中山區"]),
@@ -384,22 +357,18 @@ def commute_to_work():
     push("\n\n".join(msg))
 
 def market_open():
-    print(f"[Scheduler] 排程觸發時間：{datetime.now(tz)}，任務：market_open")
     msg = ["【台股開盤】"] + [stock(name) for name in stock_list_tpex]
     push("\n\n".join(msg))
 
 def market_mid():
-    print(f"[Scheduler] 排程觸發時間：{datetime.now(tz)}，任務：market_mid")
     msg = ["【台股盤中快訊】"] + [stock(name) for name in stock_list_tpex]
     push("\n\n".join(msg))
 
 def market_close():
-    print(f"[Scheduler] 排程觸發時間：{datetime.now(tz)}，任務：market_close")
     msg = ["【台股收盤】"] + [stock(name) for name in stock_list_tpex]
     push("\n\n".join(msg))
 
 def evening_zhongzheng():
-    print(f"[Scheduler] 排程觸發時間：{datetime.now(tz)}，任務：evening_zhongzheng")
     msg = [
         "【下班打球提醒/中正區】",
         weather_accu("中正區", *LOCATION_COORDS["中正區"]),
@@ -409,7 +378,6 @@ def evening_zhongzheng():
     push("\n\n".join(msg))
 
 def evening_xindian():
-    print(f"[Scheduler] 排程觸發時間：{datetime.now(tz)}，任務：evening_xindian")
     msg = [
         "【回家/新店區】",
         weather_accu("新店區", *LOCATION_COORDS["新店區"]),
@@ -419,29 +387,10 @@ def evening_xindian():
     push("\n\n".join(msg))
 
 def us_market_open1():
-    print(f"[Scheduler] 排程觸發時間：{datetime.now(tz)}，任務：us_market_open1")
     push("【美股開盤速報】\n" + us())
 
 def us_market_open2():
-    print(f"[Scheduler] 排程觸發時間：{datetime.now(tz)}，任務：us_market_open2")
     push("【美股盤後行情】\n" + us())
-
-def keep_alive():
-    print(f"[Scheduler] 定時喚醒維持運作 {datetime.now(tz)}")
-
-# ========== Scheduler 啟動 ==========
-#scheduler = BackgroundScheduler(timezone=tz)
-#scheduler.add_job(keep_alive, CronTrigger(minute='0,10,20,30,40,45,50'))
-scheduler.add_job(morning_briefing, CronTrigger(hour=7, minute=10))
-scheduler.add_job(commute_to_work, CronTrigger(day_of_week='mon-fri', hour=8, minute=0))
-scheduler.add_job(market_open, CronTrigger(day_of_week='mon-fri', hour=9, minute=30))
-scheduler.add_job(market_mid, CronTrigger(day_of_week='mon-fri', hour=12, minute=0))
-scheduler.add_job(market_close, CronTrigger(day_of_week='mon-fri', hour=13, minute=45))
-scheduler.add_job(evening_zhongzheng, CronTrigger(day_of_week='mon,wed,fri', hour=18, minute=0))
-scheduler.add_job(evening_xindian, CronTrigger(day_of_week='tue,thu', hour=18, minute=0))
-scheduler.add_job(us_market_open1, CronTrigger(day_of_week='mon-fri', hour=21, minute=30))
-scheduler.add_job(us_market_open2, CronTrigger(day_of_week='mon-fri', hour=23, minute=0))
-scheduler.start()
 
 # ========== Flask Routes ==========
 @app.route("/")
@@ -486,7 +435,6 @@ def test_us():
 @app.route("/send_scheduled_test")
 def send_scheduled_test():
     time_str = request.args.get("time", "").strip()
-    print(f"[TEST] 模擬排程時間：{time_str}")
     if time_str == "07:10":
         morning_briefing()
     elif time_str == "08:00":
@@ -498,7 +446,7 @@ def send_scheduled_test():
     elif time_str == "13:45":
         market_close()
     elif time_str == "18:00":
-        weekday = datetime.now(tz).weekday()
+        weekday = datetime.now().weekday()
         if weekday in [0,2,4]: # Mon Wed Fri
             evening_zhongzheng()
         else: # Tue Thu
