@@ -32,7 +32,7 @@ CWA_API_KEY = os.getenv("CWA_API_KEY", WEATHER_API_KEY)
 ACCUWEATHER_API_KEY = os.getenv("ACCUWEATHER_API_KEY")
 
 # ========== 台灣時區 ==========
-tz = pytz.timezone("Asia/Taipei")
+#tz = pytz.timezone("Asia/Taipei")
 
 app = Flask(__name__)
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
@@ -430,8 +430,8 @@ def keep_alive():
     print(f"[Scheduler] 定時喚醒維持運作 {datetime.now(tz)}")
 
 # ========== Scheduler 啟動 ==========
-scheduler = BackgroundScheduler(timezone=tz)
-scheduler.add_job(keep_alive, CronTrigger(minute='0,10,20,30,40,45,50'))
+#scheduler = BackgroundScheduler(timezone=tz)
+#scheduler.add_job(keep_alive, CronTrigger(minute='0,10,20,30,40,45,50'))
 scheduler.add_job(morning_briefing, CronTrigger(hour=7, minute=10))
 scheduler.add_job(commute_to_work, CronTrigger(day_of_week='mon-fri', hour=8, minute=0))
 scheduler.add_job(market_open, CronTrigger(day_of_week='mon-fri', hour=9, minute=30))
