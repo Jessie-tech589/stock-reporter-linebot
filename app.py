@@ -424,32 +424,53 @@ def test_cal():
 def test_us():
     return us()
 
-@app.route("/send_scheduled_test")
-def send_scheduled_test():
-    time_str = request.args.get("time", "").strip()
-    if time_str == "07:10":
+from datetime import datetime
+
+@app.route("/send_scheduled_task")
+def send_scheduled_task():
+    now = datetime.now()
+    hour = now.hour
+    minute = now.minute
+
+    # 早安
+    if hour == 7 and minute == 10:
         morning_briefing()
-    elif time_str == "08:00":
+        return "✅ 已執行 morning_briefing"
+    # 通勤
+    elif hour == 8 and minute == 0:
         commute_to_work()
-    elif time_str == "09:30":
+        return "✅ 已執行 commute_to_work"
+    # 台股開盤
+    elif hour == 9 and minute == 30:
         market_open()
-    elif time_str == "12:00":
+        return "✅ 已執行 market_open"
+    # 台股盤中
+    elif hour == 12 and minute == 0:
         market_mid()
-    elif time_str == "13:45":
+        return "✅ 已執行 market_mid"
+    # 台股收盤
+    elif hour == 13 and minute == 45:
         market_close()
-    elif time_str == "18:00":
-        weekday = datetime.now().weekday()
+        return "✅ 已執行 market_close"
+    # 下班
+    elif hour == 18 and minute == 0:
+        weekday = now.weekday()
         if weekday in [0,2,4]: # Mon Wed Fri
             evening_zhongzheng()
-        else: # Tue Thu
+            return "✅ 已執行 evening_zhongzheng"
+        else:
             evening_xindian()
-    elif time_str == "21:30":
+            return "✅ 已執行 evening_xindian"
+    # 美股開盤
+    elif hour == 21 and minute == 30:
         us_market_open1()
-    elif time_str == "23:00":
+        return "✅ 已執行 us_market_open1"
+    # 美股盤後
+    elif hour == 23 and minute == 0:
         us_market_open2()
+        return "✅ 已執行 us_market_open2"
     else:
-        return f"❌ 不支援時間 {time_str}"
-    return f"✅ 模擬推播 {time_str} 完成"
+        return "⏰ 目前無需推播"
 
 @app.route("/health")
 def health():
