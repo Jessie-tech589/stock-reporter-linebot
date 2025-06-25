@@ -33,7 +33,7 @@ LOCATION_COORDS = {
     "新店區": (24.972, 121.539),
     "中山區": (25.063, 121.526),
     "中正區": (25.033, 121.519),
-    "大安區": (25.033, 121.543),
+    "大安區": (25.033, 121.543)
 }
 
 STOCK = {
@@ -43,6 +43,7 @@ STOCK = {
     "輝達": "NVDA", "美超微": "SMCI", "GOOGL": "GOOGL", "Google": "GOOGL",
     "微軟": "MSFT"
 }
+
 stock_list_tpex = [
     "台積電", "聯電", "鴻準", "仁寶", "陽明", "華航", "長榮航", "大盤"
 ]
@@ -82,12 +83,12 @@ ROUTE_CONFIG = {
             "新北市新店區民族路",
             "新北市新店區建國路"
         ]
-    ),
+    )
 }
 
 WEATHER_ICON = {
     "Sunny": "☀️", "Clear": "🌕", "Cloudy": "☁️", "Partly cloudy": "⛅",
-    "Rain": "🌧️", "Thunderstorm": "⛈️", "Fog": "🌫️", "Snow": "🌨️",
+    "Rain": "🌧️", "Thunderstorm": "⛈️", "Fog": "🌫️", "Snow": "🌨️"
 }
 TRAFFIC_EMOJI = { "RED": "🔴", "YELLOW": "🟡", "GREEN": "🟢" }
 
@@ -114,26 +115,17 @@ def weather_accu(city, lat, lon):
 
 # ========== 匯率 ==========
 def fx():
-    url = "https://rate.bot.com.tw/xrt?Lang=zh-TW"
+    url = "https://tw.rter.info/capi.php"
     try:
-        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-        soup = BeautifulSoup(r.text, "lxml")
-        table = soup.find("table")
-        rows = table.find_all("tr")
-        mapping = {
-            "美元 (USD)": ("USD","🇺🇸"),
-            "日圓 (JPY)": ("JPY","🇯🇵"),
-            "人民幣 (CNY)": ("CNY","🇨🇳"),
-            "港幣 (HKD)": ("HKD","🇭🇰"),
-        }
+        r = requests.get(url, timeout=10)
+        data = r.json()
         result = []
-        for row in rows:
-            cells = row.find_all("td")
-            if cells and cells[0].text.strip() in mapping:
-                code, flag = mapping[cells[0].text.strip()]
-                rate = cells[2].text.strip()
+        for code, flag in [("USD", "🇺🇸"), ("JPY", "🇯🇵"), ("CNY", "🇨🇳"), ("HKD", "🇭🇰")]:
+            key = f"USD{code}" if code != "USD" else "USDTWD"
+            rate = data.get(key, {}).get("Exrate")
+            if rate:
                 result.append(f"{flag} {code}: {rate}")
-        return "💱 今日匯率（現金賣出）\n" + "\n".join(result) if result else "查無匯率資料"
+        return "💱 今日匯率\n" + "\n".join(result) if result else "查無匯率資料"
     except Exception as e:
         print("[FX-ERR]", e)
         return "匯率查詢失敗"
@@ -173,7 +165,7 @@ def get_taiwan_oil_price():
 # ========== 新聞（NewsData.io，含台灣/大陸/國際） ==========
 def news():
     api_key = NEWSDATA_API_KEY or ""
-    url = f"https://newsdata.io/api/1/news?apikey={api_key}&country=tw,cn,us&language=zh"
+    url = f"https://newsdata.io/api/1/news?apikey={api_key}&country=tw,cn,us&language=zh&category=top"
     try:
         r = requests.get(url, timeout=10)
         data = r.json()
@@ -249,13 +241,13 @@ def stock_all():
 def cal():
     if not GOOGLE_CREDS_JSON_B64: return "行事曆查詢失敗"
     try:
-        info=json.loads(base64.b64decode(GOOGLE_CREDS_JSON_B64))
-        creds=service_account.Credentials.from_service_account_info(info,scopes=["https://www.googleapis.com/auth/calendar.readonly"])
-        svc=build("calendar","v3",credentials=creds,cache_discovery=False)
-        today=date.today()
-        start=datetime.combine(today,datetime.min.time()).isoformat()
-        end =datetime.combine(today,datetime.max.time()).isoformat()
-        items=svc.events().list(calendarId=GOOGLE_CALENDAR_ID,timeMin=start,timeMax=end,singleEvents=True,orderBy="startTime",maxResults=10).execute().get("items",[])
+        info = json.loads(base64.b64decode(GOOGLE_CREDS_JSON_B64))
+        creds = service_account.Credentials.from_service_account_info(info,scopes=["https://www.googleapis.com/auth/calendar.readonly"])
+        svc = build("calendar","v3",credentials=creds,cache_discovery=False)
+        today = date.today()
+        start = datetime.combine(today,datetime.min.time()).isoformat()
+        end = datetime.combine(today,datetime.max.time()).isoformat()
+        items = svc.events().list(calendarId=GOOGLE_CALENDAR_ID,timeMin=start,timeMax=end,singleEvents=True,orderBy="startTime",maxResults=10).execute().get("items",[])
         return "\n".join("🗓️ "+e["summary"] for e in items if e.get("summary")) or "今日無行程"
     except Exception as e:
         print("[CAL-ERR]", e)
