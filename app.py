@@ -411,6 +411,11 @@ def us_market_open2():
 scheduler = BackgroundScheduler(timezone=TZ)
 
 def register_jobs():
+    def keep_alive():
+    print(f"[Scheduler] 定時喚醒維持運作 {now_tw()}")
+
+# 放在 register_jobs 內
+    scheduler.add_job(keep_alive, CronTrigger(minute="0,10,20,30,40,50"))
     scheduler.add_job(morning_briefing, CronTrigger(hour=7, minute=10))
     scheduler.add_job(commute_to_work, CronTrigger(day_of_week="mon-fri", hour=8, minute=0))
     scheduler.add_job(market_open, CronTrigger(day_of_week="mon-fri", hour=9, minute=30))
