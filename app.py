@@ -1,11 +1,10 @@
-
-
 import os
 import base64
 import json
 import requests
 import yfinance as yf
 import pytz
+import time
 from datetime import datetime, date
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
@@ -24,7 +23,7 @@ app = Flask(__name__)
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 LINE_USER_ID = os.getenv("LINE_USER_ID")
-WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")  # OpenWeatherMap
 ACCUWEATHER_API_KEY = os.getenv("ACCUWEATHER_API_KEY")
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
@@ -186,8 +185,9 @@ def get_taiwan_oil_price():
         print("[OIL-ENB-ERR]", e)
     return "⛽️ 油價查詢失敗"
 
-# ========== 新聞 ==========
+# ========== 新聞（NewsData+NewsAPI） ==========
 def news():
+    # NewsData：台灣/大陸/國際
     try:
         api_key = NEWSDATA_API_KEY or ""
         url = f"https://newsdata.io/api/1/news?apikey={api_key}&country=tw,cn,us&language=zh"
@@ -203,16 +203,15 @@ def news():
                 cn_news.append(f"• {title}\n{link}")
             else:
                 intl_news.append(f"• {title}\n{link}")
-        msg = []
-        if tw_news:
-            msg.append("【台灣新聞】\n" + "\n".join(tw_news[:3]))
-        if cn_news:
-            msg.append("【大陸新聞】\n" + "\n".join(cn_news[:3]))
-        if intl_news:
-            msg.append("【國際新聞】\n" + "\n".join(intl_news[:3]))
-        return "\n\n".join(msg) if msg else "今日無新聞"
+        result = []
+        if tw_news: result.append("【台灣】\n" + "\n".join(tw_news[:3]))
+        if cn_news: result.append("【大陸】\n" + "\n".join(cn_news[:3]))
+        if intl_news: result.append("【國際】\n" + "\n".join(intl_news[:3]))
+        if result:
+            return "【新聞 NewsData】\n" + "\n\n".join(result)
     except Exception as e:
         print("[NEWS-NEWSDATA-ERR]", e)
+    # NewsAPI 台灣備援
     try:
         url = f"https://newsapi.org/v2/top-headlines?country=tw&apiKey={NEWS_API_KEY}"
         data = requests.get(url, timeout=8).json()
@@ -247,6 +246,7 @@ def cal():
 # ========== 台股 ==========
 def stock(name: str) -> str:
     code = STOCK.get(name, name)
+    # 主：TWSE API
     if code.endswith(".TW"):
         sym = code.replace(".TW", "").zfill(4)
         try:
@@ -261,7 +261,9 @@ def stock(name: str) -> str:
             return f"❌ {name}（台股，TWSE） 查無今日收盤價"
         except Exception as e:
             print("[STOCK-TWSE-ERR]", e)
+    # 備：yfinance（sleep(2)）
     try:
+        time.sleep(2)
         tkr = yf.Ticker(code)
         price = tkr.info.get("regularMarketPrice")
         prev = tkr.info.get("previousClose")
@@ -274,12 +276,17 @@ def stock(name: str) -> str:
             return f"❌ {name}（台股 yfinance） 查無資料"
     except Exception as e:
         print("[STOCK-YF-ERR]", code, e)
+        if "429" in str(e):
+            return f"❌ {name}（台股 yfinance）: 來源被限制流量，請稍後再查"
+        else:
+            return f"❌ {name}（台股 yfinance） 查詢失敗"
     return f"❌ {name}（台股） 查詢失敗"
 
 def stock_all():
     result = []
     for name in stock_list_tpex:
         result.append(stock(name))
+        time.sleep(2)  # Yahoo 防 ban
     return "\n".join(result)
 
 # ========== 美股 ==========
@@ -297,6 +304,7 @@ def us():
     }
     def q_yf(code, name):
         try:
+            time.sleep(2)
             tkr = yf.Ticker(code)
             price = tkr.info.get("regularMarketPrice")
             prev = tkr.info.get("previousClose")
@@ -305,9 +313,14 @@ def us():
                 pct = diff / prev * 100 if prev else 0
                 emo = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
                 return f"{emo} {name}: {price:.2f} ({diff:+.2f},{pct:+.2f}%)"
+            else:
+                return f"❌ {name}: 查無資料"
         except Exception as e:
             print("[US-YF-ERR]", code, e)
-        return f"❌ {name}: 查無資料"
+            if "429" in str(e):
+                return f"❌ {name}: 來源流量過大，暫時無法查詢"
+            else:
+                return f"❌ {name}: 查詢失敗"
     idx_lines = [q_yf(c, n) for n, c in idx.items()]
     focus_lines = [q_yf(c, n) for c, n in focus.items()]
     return "📊 前一晚美股行情（yfinance）\n" + "\n".join(idx_lines) + "\n" + "\n".join(focus_lines)
@@ -422,7 +435,7 @@ def register_jobs():
     scheduler.add_job(market_open, CronTrigger(day_of_week="mon-fri", hour=9, minute=30))
     scheduler.add_job(market_mid, CronTrigger(day_of_week="mon-fri", hour=12, minute=0))
     scheduler.add_job(market_close, CronTrigger(day_of_week="mon-fri", hour=13, minute=45))
-    scheduler.add_job(evening_zhongzheng, CronTrigger(day_of_week="mon,wed,fri", hour=17, minute=30))
+    scheduler.add_job(evening_zhongzheng, CronTrigger(day_of_week="mon,wed,fri", hour=18, minute=0))
     scheduler.add_job(evening_xindian, CronTrigger(day_of_week="tue,thu", hour=18, minute=0))
     scheduler.add_job(us_market_open1, CronTrigger(day_of_week="mon-fri", hour=21, minute=30))
     scheduler.add_job(us_market_open2, CronTrigger(day_of_week="mon-fri", hour=23, minute=0))
@@ -452,7 +465,7 @@ def send_scheduled_test():
         market_mid()
     elif time_str == "13:45":
         market_close()
-    elif time_str == "17:30":
+    elif time_str == "18:00":
         now_wd = now_tw().weekday()
         if now_wd in [0,2,4]:
             evening_zhongzheng()
