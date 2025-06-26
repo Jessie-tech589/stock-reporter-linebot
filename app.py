@@ -423,7 +423,7 @@ def register_jobs():
     scheduler.add_job(market_mid, CronTrigger(day_of_week="mon-fri", hour=12, minute=0))
     scheduler.add_job(market_close, CronTrigger(day_of_week="mon-fri", hour=13, minute=45))
     scheduler.add_job(evening_zhongzheng, CronTrigger(day_of_week="mon,wed,fri", hour=17, minute=30))
-    scheduler.add_job(evening_xindian, CronTrigger(day_of_week="tue,thu", hour=17, minute=30))
+    scheduler.add_job(evening_xindian, CronTrigger(day_of_week="tue,thu", hour=18, minute=0))
     scheduler.add_job(us_market_open1, CronTrigger(day_of_week="mon-fri", hour=21, minute=30))
     scheduler.add_job(us_market_open2, CronTrigger(day_of_week="mon-fri", hour=23, minute=0))
 
