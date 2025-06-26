@@ -1,10 +1,12 @@
+
+
 import os
 import base64
 import json
 import requests
 import yfinance as yf
 import pytz
-from datetime import datetime, date, time as dt_time, timedelta
+from datetime import datetime, date
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
@@ -22,11 +24,11 @@ app = Flask(__name__)
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 LINE_USER_ID = os.getenv("LINE_USER_ID")
-WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")  # OpenWeatherMap
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 ACCUWEATHER_API_KEY = os.getenv("ACCUWEATHER_API_KEY")
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
-NEWS_API_KEY = os.getenv("NEWS_API_KEY")  # NewsAPI
-NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY") # NewsData
+NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
 ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
 GOOGLE_CREDS_JSON_B64 = os.getenv("GOOGLE_CREDS_JSON")
 GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
@@ -86,7 +88,6 @@ ROUTE_CONFIG = {
     ),
 }
 
-
 WEATHER_ICON = {
     "Sunny": "☀️", "Clear": "🌕", "Cloudy": "☁️", "Partly cloudy": "⛅",
     "Rain": "🌧️", "Thunderstorm": "⛈️", "Fog": "🌫️", "Snow": "🌨️",
@@ -95,9 +96,8 @@ WEATHER_ICON = {
 def now_tw():
     return datetime.now(TZ)
 
-# ========== 天氣（AccuWeather → OpenWeatherMap 備援） ==========
+# ========== 天氣 ==========
 def weather(city, lat, lon):
-    # 1. AccuWeather
     try:
         url_loc = f"https://dataservice.accuweather.com/locations/v1/cities/geoposition/search?apikey={ACCUWEATHER_API_KEY}&q={lat},{lon}&language=zh-tw"
         loc_res = requests.get(url_loc, timeout=8)
@@ -113,7 +113,6 @@ def weather(city, lat, lon):
                 f"{wxtext}，溫度 {temp}°C，體感 {realfeel}°C\n來源: AccuWeather")
     except Exception as e:
         print("[WX-ACC-ERR]", e)
-    # 2. OpenWeatherMap
     try:
         url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&units=metric&lang=zh_tw"
         js = requests.get(url, timeout=8).json()
@@ -127,9 +126,8 @@ def weather(city, lat, lon):
         print("[WX-OWM-ERR]", e)
     return f"天氣查詢失敗（{city}）"
 
-# ========== 匯率（台銀 → AlphaVantage 備援） ==========
+# ========== 匯率 ==========
 def fx():
-    # 台銀匯率
     try:
         url = "https://rate.bot.com.tw/xrt?Lang=zh-TW"
         r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
@@ -149,7 +147,6 @@ def fx():
             return "💱 今日匯率（現金賣出，台銀）\n" + "\n".join(result)
     except Exception as e:
         print("[FX-TWBANK-ERR]", e)
-    # AlphaVantage
     try:
         url = f"https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=USD&to_currency=TWD&apikey={ALPHA_VANTAGE_API_KEY}"
         js = requests.get(url, timeout=8).json()
@@ -159,7 +156,7 @@ def fx():
         print("[FX-AV-ERR]", e)
     return "匯率查詢失敗"
 
-# ========== 油價（中油 → 行政院能源局） ==========
+# ========== 油價 ==========
 def get_taiwan_oil_price():
     try:
         url = "https://vipmbr.cpc.com.tw/mbwebs/mbwebs/ShowHistoryPrice"
@@ -175,7 +172,6 @@ def get_taiwan_oil_price():
                 f"92: {gas_92} 元\n95: {gas_95} 元\n98: {gas_98} 元\n柴油: {diesel} 元")
     except Exception as e:
         print("[OIL-CPC-ERR]", e)
-    # 行政院能源局
     try:
         url = "https://www2.moeaea.gov.tw/oil106/year/YearAverage.aspx"
         r = requests.get(url, timeout=8)
@@ -190,24 +186,33 @@ def get_taiwan_oil_price():
         print("[OIL-ENB-ERR]", e)
     return "⛽️ 油價查詢失敗"
 
-# ========== 新聞（NewsData → NewsAPI 備援） ==========
+# ========== 新聞 ==========
 def news():
-    # NewsData
     try:
         api_key = NEWSDATA_API_KEY or ""
         url = f"https://newsdata.io/api/1/news?apikey={api_key}&country=tw,cn,us&language=zh"
         data = requests.get(url, timeout=8).json()
-        tw_news = []
+        tw_news, cn_news, intl_news = [], [], []
         for item in data.get("results", []):
+            country = item.get("country", "")
             title = item.get("title", "")
             link = item.get("link", "")
-            if item.get("country") == "tw":
+            if country == "tw":
                 tw_news.append(f"• {title}\n{link}")
+            elif country == "cn":
+                cn_news.append(f"• {title}\n{link}")
+            else:
+                intl_news.append(f"• {title}\n{link}")
+        msg = []
         if tw_news:
-            return "【台灣新聞 NewsData】\n" + "\n".join(tw_news[:3])
+            msg.append("【台灣新聞】\n" + "\n".join(tw_news[:3]))
+        if cn_news:
+            msg.append("【大陸新聞】\n" + "\n".join(cn_news[:3]))
+        if intl_news:
+            msg.append("【國際新聞】\n" + "\n".join(intl_news[:3]))
+        return "\n\n".join(msg) if msg else "今日無新聞"
     except Exception as e:
         print("[NEWS-NEWSDATA-ERR]", e)
-    # NewsAPI
     try:
         url = f"https://newsapi.org/v2/top-headlines?country=tw&apiKey={NEWS_API_KEY}"
         data = requests.get(url, timeout=8).json()
@@ -239,10 +244,9 @@ def cal():
         print("[CAL-ERR]", e)
         return "行事曆查詢失敗"
 
-# ========== 台股（證交所 API → yfinance 備援） ==========
+# ========== 台股 ==========
 def stock(name: str) -> str:
     code = STOCK.get(name, name)
-    # 主：TWSE API
     if code.endswith(".TW"):
         sym = code.replace(".TW", "").zfill(4)
         try:
@@ -257,7 +261,6 @@ def stock(name: str) -> str:
             return f"❌ {name}（台股，TWSE） 查無今日收盤價"
         except Exception as e:
             print("[STOCK-TWSE-ERR]", e)
-    # 備：yfinance
     try:
         tkr = yf.Ticker(code)
         price = tkr.info.get("regularMarketPrice")
@@ -279,7 +282,7 @@ def stock_all():
         result.append(stock(name))
     return "\n".join(result)
 
-# ========== 美股（yfinance → Finnhub 備援） ==========
+# ========== 美股 ==========
 def us():
     idx = {
         "道瓊": "^DJI",
@@ -292,7 +295,6 @@ def us():
         "GOOGL": "Google",
         "AAPL": "蘋果"
     }
-    # yfinance
     def q_yf(code, name):
         try:
             tkr = yf.Ticker(code)
@@ -414,8 +416,6 @@ def keep_alive():
     print(f"[Scheduler] 定時喚醒維持運作 {now_tw()}")
 
 def register_jobs():
-
-# 放在 register_jobs 內
     scheduler.add_job(keep_alive, CronTrigger(minute="0,10,20,30,40,50"))
     scheduler.add_job(morning_briefing, CronTrigger(hour=7, minute=10))
     scheduler.add_job(commute_to_work, CronTrigger(day_of_week="mon-fri", hour=8, minute=0))
@@ -426,8 +426,6 @@ def register_jobs():
     scheduler.add_job(evening_xindian, CronTrigger(day_of_week="tue,thu", hour=17, minute=30))
     scheduler.add_job(us_market_open1, CronTrigger(day_of_week="mon-fri", hour=21, minute=30))
     scheduler.add_job(us_market_open2, CronTrigger(day_of_week="mon-fri", hour=23, minute=0))
-    # keep-alive
-    scheduler.add_job(lambda: print(f"[Scheduler] keep-alive {now_tw()}"), CronTrigger(minute="0,10,20,30,40,50"))
 
 register_jobs()
 scheduler.start()
@@ -467,8 +465,6 @@ def send_scheduled_test():
     else:
         return f"❌ 不支援時間 {time_str}"
     return f"✅ 模擬推播 {time_str} 完成"
-
-# 其他測試 API (依需求自行補齊)
 
 # ========== LINE BOT Webhook ==========
 @app.route("/callback", methods=['POST'])
