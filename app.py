@@ -4,9 +4,9 @@ import json
 import requests
 import yfinance as yf
 import pytz
-import logging
 import time
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
@@ -31,7 +31,6 @@ GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
 GOOGLE_CREDS_JSON_B64 = os.getenv("GOOGLE_CREDS_JSON")
 GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
-
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
@@ -87,16 +86,13 @@ ROUTE_CONFIG = {
         ]
     ),
 }
-
 WEATHER_ICON = {
     "Sunny": "☀️", "Clear": "🌕", "Cloudy": "☁️", "Partly cloudy": "⛅",
     "Rain": "🌧️", "Thunderstorm": "⛈️", "Fog": "🌫️", "Snow": "🌨️",
 }
-
 def now_tw():
     return datetime.now(TZ)
 
-# --- 天氣（AccuWeather → OpenWeatherMap 備援） ---
 def weather(city, lat, lon):
     try:
         url_loc = f"https://dataservice.accuweather.com/locations/v1/cities/geoposition/search?apikey={ACCUWEATHER_API_KEY}&q={lat},{lon}&language=zh-tw"
@@ -126,7 +122,6 @@ def weather(city, lat, lon):
         logging.warning(f"[WX-OWM-ERR] {e}")
     return f"天氣查詢失敗（{city}）"
 
-# --- 匯率（台銀 → AlphaVantage 備援） ---
 def fx():
     try:
         url = "https://rate.bot.com.tw/xrt?Lang=zh-TW"
@@ -156,7 +151,6 @@ def fx():
         logging.warning(f"[FX-AV-ERR] {e}")
     return "匯率查詢失敗"
 
-# --- 油價（中油 → 行政院能源局） ---
 def get_taiwan_oil_price():
     try:
         url = "https://vipmbr.cpc.com.tw/mbwebs/mbwebs/ShowHistoryPrice"
@@ -186,7 +180,6 @@ def get_taiwan_oil_price():
         logging.warning(f"[OIL-ENB-ERR] {e}")
     return "⛽️ 油價查詢失敗"
 
-# --- 行事曆 ---
 def cal():
     try:
         if not GOOGLE_CREDS_JSON_B64:
@@ -203,7 +196,6 @@ def cal():
         logging.warning(f"[CAL-ERR] {e}")
         return "行事曆查詢失敗"
 
-# --- 台股（證交所 API → yfinance 備援） ---
 def stock(name: str) -> str:
     code = STOCK.get(name, name)
     if code.endswith(".TW"):
@@ -221,6 +213,7 @@ def stock(name: str) -> str:
         except Exception as e:
             logging.warning(f"[STOCK-TWSE-ERR] {name} {e}")
     try:
+        time.sleep(2)
         tkr = yf.Ticker(code)
         price = tkr.info.get("regularMarketPrice")
         prev = tkr.info.get("previousClose")
@@ -232,17 +225,19 @@ def stock(name: str) -> str:
         else:
             return f"❌ {name}（台股 yfinance） 查無資料"
     except Exception as e:
-        logging.warning(f"[STOCK-YF-ERR] {name} {e}")
+        if "429" in str(e):
+            return f"❌ {name}（台股 yfinance）: 來源被限制流量，請稍後再查"
+        else:
+            return f"❌ {name}（台股 yfinance） 查詢失敗"
     return f"❌ {name}（台股） 查詢失敗"
 
 def stock_all():
     result = []
     for name in stock_list_tpex:
         result.append(stock(name))
-        time.sleep(2)  # Yahoo封鎖風險
+        time.sleep(2)
     return "\n".join(result)
 
-# --- 美股（yfinance） ---
 def us():
     idx = {
         "道瓊": "^DJI",
@@ -257,6 +252,7 @@ def us():
     }
     def q_yf(code, name):
         try:
+            time.sleep(2)
             tkr = yf.Ticker(code)
             price = tkr.info.get("regularMarketPrice")
             prev = tkr.info.get("previousClose")
@@ -265,14 +261,18 @@ def us():
                 pct = diff / prev * 100 if prev else 0
                 emo = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
                 return f"{emo} {name}: {price:.2f} ({diff:+.2f},{pct:+.2f}%)"
+            else:
+                return f"❌ {name}: 查無資料"
         except Exception as e:
-            logging.warning(f"[US-YF-ERR] {code} {e}")
+            if "429" in str(e):
+                return f"❌ {name}: 來源流量過大，暫時無法查詢"
+            else:
+                return f"❌ {name}: 查詢失敗"
         return f"❌ {name}: 查無資料"
     idx_lines = [q_yf(c, n) for n, c in idx.items()]
     focus_lines = [q_yf(c, n) for c, n in focus.items()]
     return "📊 前一晚美股行情\n" + "\n".join(idx_lines + focus_lines)
 
-# --- Google Maps 路況 ---
 def traffic(label):
     if label not in ROUTE_CONFIG:
         return f"🚗 找不到路線 {label}"
@@ -305,14 +305,13 @@ def traffic(label):
         logging.warning(f"[TRAFFIC-ERR] {e}")
     return "🚗 路況查詢失敗"
 
-# --- LINE 推播 ---
 def push(message):
+    logging.info(f"[LineBot] 推播給 {LINE_USER_ID}：{message[:50]}...")
     try:
         line_bot_api.push_message(LINE_USER_ID, TextSendMessage(text=message))
     except Exception as e:
         logging.error(f"[LineBot] 推播失敗：{e}")
 
-# --- 定時推播任務 ---
 def morning_briefing():
     msg = [
         "【早安】",
@@ -367,7 +366,6 @@ def us_market_open1():
 def us_market_open2():
     push("【美股盤後行情】\n" + us())
 
-# --- Scheduler ---
 scheduler = BackgroundScheduler(timezone=TZ)
 
 def keep_alive():
@@ -380,8 +378,8 @@ def register_jobs():
     scheduler.add_job(market_open, CronTrigger(day_of_week="mon-fri", hour=9, minute=30))
     scheduler.add_job(market_mid, CronTrigger(day_of_week="mon-fri", hour=12, minute=0))
     scheduler.add_job(market_close, CronTrigger(day_of_week="mon-fri", hour=13, minute=45))
-    scheduler.add_job(evening_zhongzheng, CronTrigger(day_of_week="mon,wed,fri", hour=18, minute=00))
-    scheduler.add_job(evening_xindian, CronTrigger(day_of_week="tue,thu", hour=18, minute=00))
+    scheduler.add_job(evening_zhongzheng, CronTrigger(day_of_week="mon,wed,fri", hour=18, minute=0))
+    scheduler.add_job(evening_xindian, CronTrigger(day_of_week="tue,thu", hour=18, minute=0))
     scheduler.add_job(us_market_open1, CronTrigger(day_of_week="mon-fri", hour=21, minute=30))
     scheduler.add_job(us_market_open2, CronTrigger(day_of_week="mon-fri", hour=23, minute=0))
 
