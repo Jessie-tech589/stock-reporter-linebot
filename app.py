@@ -4,8 +4,8 @@ import json
 import requests
 import yfinance as yf
 import pytz
-import time
 import logging
+import time
 from datetime import datetime
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
@@ -18,6 +18,7 @@ from apscheduler.triggers.cron import CronTrigger
 from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
 
+# ====== 基本設定 ======
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 TZ = pytz.timezone('Asia/Taipei')
@@ -47,43 +48,23 @@ STOCK = {
     "蘋果": "AAPL", "微軟": "MSFT"
 }
 stock_list_tpex = ["台積電", "聯電", "鴻準", "仁寶", "陽明", "華航", "長榮航", "大盤"]
-
 ROUTE_CONFIG = {
     "家到公司": dict(
         o="新北市新店區建國路99巷", d="台北市中山區南京東路三段131號",
-        waypoints=[
-            "新北市新店區建國路",
-            "新北市新店區民族路",
-            "新北市新店區北新路",
-            "台北市羅斯福路",
-            "台北市基隆路",
-            "台北市辛亥路",
-            "台北市復興南路",
-            "台北市南京東路"
-        ]
+        waypoints=["新北市新店區建國路", "新北市新店區民族路", "新北市新店區北新路",
+                   "台北市羅斯福路", "台北市基隆路", "台北市辛亥路",
+                   "台北市復興南路", "台北市南京東路"]
     ),
     "公司到郵局": dict(
         o="台北市中山區南京東路三段131號", d="台北市中正區愛國東路216號",
-        waypoints=[
-            "台北市南京東路",
-            "台北市林森北路",
-            "台北市信義路",
-            "台北市信義二段10巷",
-            "台北市愛國東21巷"
-        ]
+        waypoints=["台北市南京東路", "台北市林森北路", "台北市信義路",
+                   "台北市信義二段10巷", "台北市愛國東21巷"]
     ),
     "公司到家": dict(
         o="台北市中山區南京東路三段131號", d="新北市新店區建國路99巷",
-        waypoints=[
-            "台北市南京東路",
-            "台北市復興南路",
-            "台北市辛亥路",
-            "台北市基隆路",
-            "台北市羅斯福路",
-            "新北市新店區北新路",
-            "新北市新店區民族路",
-            "新北市新店區建國路"
-        ]
+        waypoints=["台北市南京東路", "台北市復興南路", "台北市辛亥路",
+                   "台北市基隆路", "台北市羅斯福路", "新北市新店區北新路",
+                   "新北市新店區民族路", "新北市新店區建國路"]
     ),
 }
 WEATHER_ICON = {
@@ -93,6 +74,7 @@ WEATHER_ICON = {
 def now_tw():
     return datetime.now(TZ)
 
+# 天氣
 def weather(city, lat, lon):
     try:
         url_loc = f"https://dataservice.accuweather.com/locations/v1/cities/geoposition/search?apikey={ACCUWEATHER_API_KEY}&q={lat},{lon}&language=zh-tw"
@@ -122,6 +104,7 @@ def weather(city, lat, lon):
         logging.warning(f"[WX-OWM-ERR] {e}")
     return f"天氣查詢失敗（{city}）"
 
+# 匯率
 def fx():
     try:
         url = "https://rate.bot.com.tw/xrt?Lang=zh-TW"
@@ -151,6 +134,7 @@ def fx():
         logging.warning(f"[FX-AV-ERR] {e}")
     return "匯率查詢失敗"
 
+# 油價
 def get_taiwan_oil_price():
     try:
         url = "https://vipmbr.cpc.com.tw/mbwebs/mbwebs/ShowHistoryPrice"
@@ -180,6 +164,7 @@ def get_taiwan_oil_price():
         logging.warning(f"[OIL-ENB-ERR] {e}")
     return "⛽️ 油價查詢失敗"
 
+# 行事曆
 def cal():
     try:
         if not GOOGLE_CREDS_JSON_B64:
@@ -196,6 +181,7 @@ def cal():
         logging.warning(f"[CAL-ERR] {e}")
         return "行事曆查詢失敗"
 
+# 台股
 def stock(name: str) -> str:
     code = STOCK.get(name, name)
     if code.endswith(".TW"):
@@ -238,6 +224,7 @@ def stock_all():
         time.sleep(2)
     return "\n".join(result)
 
+# 美股
 def us():
     idx = {
         "道瓊": "^DJI",
@@ -268,11 +255,11 @@ def us():
                 return f"❌ {name}: 來源流量過大，暫時無法查詢"
             else:
                 return f"❌ {name}: 查詢失敗"
-        return f"❌ {name}: 查無資料"
     idx_lines = [q_yf(c, n) for n, c in idx.items()]
     focus_lines = [q_yf(c, n) for c, n in focus.items()]
     return "📊 前一晚美股行情\n" + "\n".join(idx_lines + focus_lines)
 
+# 路況
 def traffic(label):
     if label not in ROUTE_CONFIG:
         return f"🚗 找不到路線 {label}"
@@ -305,6 +292,7 @@ def traffic(label):
         logging.warning(f"[TRAFFIC-ERR] {e}")
     return "🚗 路況查詢失敗"
 
+# LINE 推播
 def push(message):
     logging.info(f"[LineBot] 推播給 {LINE_USER_ID}：{message[:50]}...")
     try:
@@ -312,6 +300,7 @@ def push(message):
     except Exception as e:
         logging.error(f"[LineBot] 推播失敗：{e}")
 
+# 定時推播任務
 def morning_briefing():
     msg = [
         "【早安】",
@@ -366,26 +355,27 @@ def us_market_open1():
 def us_market_open2():
     push("【美股盤後行情】\n" + us())
 
+# Scheduler 每分鐘全部排一次（僅for測試）
 scheduler = BackgroundScheduler(timezone=TZ)
-
 def keep_alive():
     logging.info(f"[Scheduler] 定時喚醒維持運作 {now_tw()}")
 
 def register_jobs():
-    scheduler.add_job(keep_alive, CronTrigger(minute="0,10,20,30,40,50"))
-    scheduler.add_job(morning_briefing, CronTrigger(hour=7, minute=10))
-    scheduler.add_job(commute_to_work, CronTrigger(day_of_week="mon-fri", hour=8, minute=0))
-    scheduler.add_job(market_open, CronTrigger(day_of_week="mon-fri", hour=9, minute=30))
-    scheduler.add_job(market_mid, CronTrigger(day_of_week="mon-fri", hour=12, minute=0))
-    scheduler.add_job(market_close, CronTrigger(day_of_week="mon-fri", hour=13, minute=45))
-    scheduler.add_job(evening_zhongzheng, CronTrigger(day_of_week="mon,wed,fri", hour=18, minute=0))
-    scheduler.add_job(evening_xindian, CronTrigger(day_of_week="tue,thu", hour=18, minute=0))
-    scheduler.add_job(us_market_open1, CronTrigger(day_of_week="mon-fri", hour=21, minute=30))
-    scheduler.add_job(us_market_open2, CronTrigger(day_of_week="mon-fri", hour=23, minute=0))
+    scheduler.add_job(keep_alive, CronTrigger(minute="*"))
+    scheduler.add_job(morning_briefing, CronTrigger(minute="*"))
+    scheduler.add_job(commute_to_work, CronTrigger(minute="*"))
+    scheduler.add_job(market_open, CronTrigger(minute="*"))
+    scheduler.add_job(market_mid, CronTrigger(minute="*"))
+    scheduler.add_job(market_close, CronTrigger(minute="*"))
+    scheduler.add_job(evening_zhongzheng, CronTrigger(minute="*"))
+    scheduler.add_job(evening_xindian, CronTrigger(minute="*"))
+    scheduler.add_job(us_market_open1, CronTrigger(minute="*"))
+    scheduler.add_job(us_market_open2, CronTrigger(minute="*"))
 
 register_jobs()
 scheduler.start()
 
+# Flask Routes
 @app.route("/")
 def home():
     return "✅ LINE Bot 正常運作中"
@@ -425,6 +415,7 @@ def send_scheduled_test():
         return f"❌ 發送時發生錯誤: {e}"
     return f"✅ 模擬推播 {time_str} 完成"
 
+# LINE BOT Webhook
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
