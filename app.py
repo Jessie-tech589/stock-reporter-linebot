@@ -1,11 +1,11 @@
 import os
 import base64
 import json
+import time
+import logging
 import requests
 import yfinance as yf
 import pytz
-import logging
-import time
 from datetime import datetime
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
@@ -18,11 +18,11 @@ from apscheduler.triggers.cron import CronTrigger
 from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
 
-# ====== 基本設定 ======
+# ====== 設定 ======
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-
 TZ = pytz.timezone('Asia/Taipei')
 app = Flask(__name__)
+
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 LINE_USER_ID = os.getenv("LINE_USER_ID")
@@ -32,6 +32,7 @@ GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
 GOOGLE_CREDS_JSON_B64 = os.getenv("GOOGLE_CREDS_JSON")
 GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
@@ -39,42 +40,40 @@ LOCATION_COORDS = {
     "新店區": (24.972, 121.539),
     "中山區": (25.063, 121.526),
     "中正區": (25.033, 121.519),
-    "大安區": (25.033, 121.543),
 }
+
 STOCK = {
     "台積電": "2330.TW", "聯電": "2303.TW", "鴻準": "2354.TW", "仁寶": "2324.TW",
     "陽明": "2609.TW", "華航": "2610.TW", "長榮航": "2618.TW", "大盤": "^TWII",
     "輝達": "NVDA", "美超微": "SMCI", "GOOGL": "GOOGL", "Google": "GOOGL",
-    "蘋果": "AAPL", "微軟": "MSFT"
+    "蘋果": "AAPL"
 }
 stock_list_tpex = ["台積電", "聯電", "鴻準", "仁寶", "陽明", "華航", "長榮航", "大盤"]
+
 ROUTE_CONFIG = {
     "家到公司": dict(
         o="新北市新店區建國路99巷", d="台北市中山區南京東路三段131號",
-        waypoints=["新北市新店區建國路", "新北市新店區民族路", "新北市新店區北新路",
-                   "台北市羅斯福路", "台北市基隆路", "台北市辛亥路",
-                   "台北市復興南路", "台北市南京東路"]
+        waypoints=[]
     ),
     "公司到郵局": dict(
         o="台北市中山區南京東路三段131號", d="台北市中正區愛國東路216號",
-        waypoints=["台北市南京東路", "台北市林森北路", "台北市信義路",
-                   "台北市信義二段10巷", "台北市愛國東21巷"]
+        waypoints=[]
     ),
     "公司到家": dict(
         o="台北市中山區南京東路三段131號", d="新北市新店區建國路99巷",
-        waypoints=["台北市南京東路", "台北市復興南路", "台北市辛亥路",
-                   "台北市基隆路", "台北市羅斯福路", "新北市新店區北新路",
-                   "新北市新店區民族路", "新北市新店區建國路"]
+        waypoints=[]
     ),
 }
+
 WEATHER_ICON = {
     "Sunny": "☀️", "Clear": "🌕", "Cloudy": "☁️", "Partly cloudy": "⛅",
     "Rain": "🌧️", "Thunderstorm": "⛈️", "Fog": "🌫️", "Snow": "🌨️",
 }
+
 def now_tw():
     return datetime.now(TZ)
 
-# 天氣
+# 天氣（AccuWeather → OWM 備援）
 def weather(city, lat, lon):
     try:
         url_loc = f"https://dataservice.accuweather.com/locations/v1/cities/geoposition/search?apikey={ACCUWEATHER_API_KEY}&q={lat},{lon}&language=zh-tw"
@@ -104,7 +103,7 @@ def weather(city, lat, lon):
         logging.warning(f"[WX-OWM-ERR] {e}")
     return f"天氣查詢失敗（{city}）"
 
-# 匯率
+# 匯率（台銀 → AlphaVantage 備援）
 def fx():
     try:
         url = "https://rate.bot.com.tw/xrt?Lang=zh-TW"
@@ -134,7 +133,7 @@ def fx():
         logging.warning(f"[FX-AV-ERR] {e}")
     return "匯率查詢失敗"
 
-# 油價
+# 油價（中油 → 能源局 備援）
 def get_taiwan_oil_price():
     try:
         url = "https://vipmbr.cpc.com.tw/mbwebs/mbwebs/ShowHistoryPrice"
@@ -142,7 +141,6 @@ def get_taiwan_oil_price():
         r.encoding = "utf-8"
         soup = BeautifulSoup(r.text, "html.parser")
         table = soup.find("table", class_="tablePrice")
-        if not table: raise Exception("找不到 tablePrice")
         rows = table.find_all("tr")
         cols = rows[1].find_all("td")
         gas_92, gas_95, gas_98, diesel = [cols[i].text.strip() for i in [1,2,3,4]]
@@ -164,7 +162,7 @@ def get_taiwan_oil_price():
         logging.warning(f"[OIL-ENB-ERR] {e}")
     return "⛽️ 油價查詢失敗"
 
-# 行事曆
+# 行事曆（Google）
 def cal():
     try:
         if not GOOGLE_CREDS_JSON_B64:
@@ -181,9 +179,10 @@ def cal():
         logging.warning(f"[CAL-ERR] {e}")
         return "行事曆查詢失敗"
 
-# 台股
+# 台股（證交所API→yfinance備援+sleep）
 def stock(name: str) -> str:
     code = STOCK.get(name, name)
+    # 主：TWSE API
     if code.endswith(".TW"):
         sym = code.replace(".TW", "").zfill(4)
         try:
@@ -198,6 +197,7 @@ def stock(name: str) -> str:
             return f"❌ {name}（台股，TWSE） 查無今日收盤價"
         except Exception as e:
             logging.warning(f"[STOCK-TWSE-ERR] {name} {e}")
+    # 備援 yfinance
     try:
         time.sleep(2)
         tkr = yf.Ticker(code)
@@ -213,8 +213,7 @@ def stock(name: str) -> str:
     except Exception as e:
         if "429" in str(e):
             return f"❌ {name}（台股 yfinance）: 來源被限制流量，請稍後再查"
-        else:
-            return f"❌ {name}（台股 yfinance） 查詢失敗"
+        return f"❌ {name}（台股 yfinance） 查詢失敗"
     return f"❌ {name}（台股） 查詢失敗"
 
 def stock_all():
@@ -224,7 +223,7 @@ def stock_all():
         time.sleep(2)
     return "\n".join(result)
 
-# 美股
+# 美股（yfinance）
 def us():
     idx = {
         "道瓊": "^DJI",
@@ -257,7 +256,7 @@ def us():
                 return f"❌ {name}: 查詢失敗"
     idx_lines = [q_yf(c, n) for n, c in idx.items()]
     focus_lines = [q_yf(c, n) for c, n in focus.items()]
-    return "📊 前一晚美股行情\n" + "\n".join(idx_lines + focus_lines)
+    return "🇺🇸 前一晚美股行情\n" + "\n".join(idx_lines + focus_lines)
 
 # 路況
 def traffic(label):
@@ -292,7 +291,7 @@ def traffic(label):
         logging.warning(f"[TRAFFIC-ERR] {e}")
     return "🚗 路況查詢失敗"
 
-# LINE 推播
+# LINE推播
 def push(message):
     logging.info(f"[LineBot] 推播給 {LINE_USER_ID}：{message[:50]}...")
     try:
@@ -300,7 +299,7 @@ def push(message):
     except Exception as e:
         logging.error(f"[LineBot] 推播失敗：{e}")
 
-# 定時推播任務
+# ========== 定時推播任務 ==========
 def morning_briefing():
     msg = [
         "【早安】",
@@ -355,27 +354,27 @@ def us_market_open1():
 def us_market_open2():
     push("【美股盤後行情】\n" + us())
 
-# Scheduler 每分鐘全部排一次（僅for測試）
+# ========== Scheduler ==========
 scheduler = BackgroundScheduler(timezone=TZ)
 def keep_alive():
     logging.info(f"[Scheduler] 定時喚醒維持運作 {now_tw()}")
 
 def register_jobs():
-    scheduler.add_job(keep_alive, CronTrigger(minute="*"))
-    scheduler.add_job(morning_briefing, CronTrigger(minute="*"))
-    scheduler.add_job(commute_to_work, CronTrigger(minute="*"))
-    scheduler.add_job(market_open, CronTrigger(minute="*"))
-    scheduler.add_job(market_mid, CronTrigger(minute="*"))
-    scheduler.add_job(market_close, CronTrigger(minute="*"))
-    scheduler.add_job(evening_zhongzheng, CronTrigger(minute="*"))
-    scheduler.add_job(evening_xindian, CronTrigger(minute="*"))
-    scheduler.add_job(us_market_open1, CronTrigger(minute="*"))
-    scheduler.add_job(us_market_open2, CronTrigger(minute="*"))
+    scheduler.add_job(keep_alive, CronTrigger(minute="0,10,20,30,40,50"))
+    scheduler.add_job(morning_briefing, CronTrigger(hour=7, minute=10))
+    scheduler.add_job(commute_to_work, CronTrigger(day_of_week="mon-fri", hour=8, minute=0))
+    scheduler.add_job(market_open, CronTrigger(day_of_week="mon-fri", hour=9, minute=30))
+    scheduler.add_job(market_mid, CronTrigger(day_of_week="mon-fri", hour=12, minute=0))
+    scheduler.add_job(market_close, CronTrigger(day_of_week="mon-fri", hour=13, minute=45))
+    scheduler.add_job(evening_zhongzheng, CronTrigger(day_of_week="mon,wed,fri", hour=18, minute=00))
+    scheduler.add_job(evening_xindian, CronTrigger(day_of_week="tue,thu", hour=18, minute=00))
+    scheduler.add_job(us_market_open1, CronTrigger(day_of_week="mon-fri", hour=21, minute=30))
+    scheduler.add_job(us_market_open2, CronTrigger(day_of_week="mon-fri", hour=23, minute=0))
 
 register_jobs()
 scheduler.start()
 
-# Flask Routes
+# ========== Flask Routes ==========
 @app.route("/")
 def home():
     return "✅ LINE Bot 正常運作中"
@@ -415,7 +414,6 @@ def send_scheduled_test():
         return f"❌ 發送時發生錯誤: {e}"
     return f"✅ 模擬推播 {time_str} 完成"
 
-# LINE BOT Webhook
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
