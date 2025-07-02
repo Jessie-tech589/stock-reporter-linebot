@@ -277,11 +277,20 @@ def traffic(label):
     try:
         r = requests.get(url, timeout=8)
         js = r.json()
-        status = js.get("status", "NO_STATUS")
-        error_msg = js.get("error_message", "")
-        return f"🚗 Google 回傳狀態：{status}\n{error_msg}"
+        routes = js.get("routes", [])
+        if not routes:
+            return "🚗 路況查詢失敗（無有效路線）"
+        legs = routes[0].get("legs", [])
+        if not legs:
+            return "🚗 路況查詢失敗（無有效路段）"
+        duration = legs[0].get('duration_in_traffic', legs[0].get('duration', {}))
+        duration_text = duration.get('text', 'N/A')
+        summary = routes[0].get("summary", "")
+        return f"🚗 路線: {summary}\n預估時間: {duration_text}\n來源: Google Maps"
     except Exception as e:
-        return f"🚗 發生錯誤: {e}"
+        logging.warning(f"[TRAFFIC-ERR] {e}")
+    return "🚗 路況查詢失敗"
+
 
 # LINE推播
 def push(message):
