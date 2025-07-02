@@ -439,15 +439,30 @@ def handle_message(event):
         reply = "指令未支援"
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
-@app.route("/send_traffic_test")
-def send_traffic_test():
+def traffic(label):
+    if label not in ROUTE_CONFIG:
+        return f"🚗 找不到路線 {label}"
+    cfg = ROUTE_CONFIG[label]
+    o, d = cfg['o'], cfg['d']
+    waypoints = cfg.get('waypoints', [])
+    o_encoded = quote_plus(o)
+    d_encoded = quote_plus(d)
+    waypoints_encoded = "|".join(quote_plus(w) for w in waypoints) if waypoints else ""
+    url = (
+        f"https://maps.googleapis.com/maps/api/directions/json?"
+        f"origin={o_encoded}&destination={d_encoded}"
+        f"{'&waypoints=' + waypoints_encoded if waypoints_encoded else ''}"
+        f"&key={GOOGLE_MAPS_API_KEY}&departure_time=now&language=zh-TW"
+    )
     try:
-        msg = traffic("家到公司")
-        push(f"🚗 測試路況：\n{msg}")
-        return "✅ 測試路況訊息已送出"
+        r = requests.get(url, timeout=8)
+        js = r.json()
+        status = js.get("status", "NO_STATUS")
+        error_msg = js.get("error_message", "")
+        return f"🚗 Google 回傳狀態：{status}\n{error_msg}"
     except Exception as e:
-        logging.error(f"[TrafficTest] {e}")
-        return f"❌ 發送失敗: {e}"
+        return f"🚗 發生錯誤: {e}"
+
 
 
 if __name__ == "__main__":
