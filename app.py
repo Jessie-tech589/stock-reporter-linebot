@@ -277,19 +277,11 @@ def traffic(label):
     try:
         r = requests.get(url, timeout=8)
         js = r.json()
-        routes = js.get("routes", [])
-        if not routes:
-            return "🚗 路況查詢失敗（無有效路線）"
-        legs = routes[0].get("legs", [])
-        if not legs:
-            return "🚗 路況查詢失敗（無有效路段）"
-        duration = legs[0].get('duration_in_traffic', legs[0].get('duration', {}))
-        duration_text = duration.get('text', 'N/A')
-        summary = routes[0].get("summary", "")
-        return f"🚗 路線: {summary}\n預估時間: {duration_text}\n來源: Google Maps"
+        status = js.get("status", "NO_STATUS")
+        error_msg = js.get("error_message", "")
+        return f"🚗 Google 回傳狀態：{status}\n{error_msg}"
     except Exception as e:
-        logging.warning(f"[TRAFFIC-ERR] {e}")
-    return "🚗 路況查詢失敗"
+        return f"🚗 發生錯誤: {e}"
 
 # LINE推播
 def push(message):
@@ -439,29 +431,16 @@ def handle_message(event):
         reply = "指令未支援"
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
-def traffic(label):
-    if label not in ROUTE_CONFIG:
-        return f"🚗 找不到路線 {label}"
-    cfg = ROUTE_CONFIG[label]
-    o, d = cfg['o'], cfg['d']
-    waypoints = cfg.get('waypoints', [])
-    o_encoded = quote_plus(o)
-    d_encoded = quote_plus(d)
-    waypoints_encoded = "|".join(quote_plus(w) for w in waypoints) if waypoints else ""
-    url = (
-        f"https://maps.googleapis.com/maps/api/directions/json?"
-        f"origin={o_encoded}&destination={d_encoded}"
-        f"{'&waypoints=' + waypoints_encoded if waypoints_encoded else ''}"
-        f"&key={GOOGLE_MAPS_API_KEY}&departure_time=now&language=zh-TW"
-    )
+@app.route("/send_traffic_test")
+def send_traffic_test():
     try:
-        r = requests.get(url, timeout=8)
-        js = r.json()
-        status = js.get("status", "NO_STATUS")
-        error_msg = js.get("error_message", "")
-        return f"🚗 Google 回傳狀態：{status}\n{error_msg}"
+        msg = traffic("家到公司")
+        push(f"🚗 測試路況：\n{msg}")
+        return "✅ 測試路況訊息已送出"
     except Exception as e:
-        return f"🚗 發生錯誤: {e}"
+        logging.error(f"[TrafficTest] {e}")
+        return f"❌ 發送失敗: {e}"
+
 
 
 
