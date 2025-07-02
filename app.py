@@ -439,5 +439,16 @@ def handle_message(event):
         reply = "指令未支援"
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
+@app.route("/send_traffic_test")
+def send_traffic_test():
+    try:
+        msg = traffic("家到公司")
+        push(f"🚗 測試路況：\n{msg}")
+        return "✅ 測試路況訊息已送出"
+    except Exception as e:
+        logging.error(f"[TrafficTest] {e}")
+        return f"❌ 發送失敗: {e}"
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
