@@ -136,31 +136,20 @@ def fx():
 # 油價（中油 → 能源局 備援）
 def get_taiwan_oil_price():
     try:
-        url = "https://vipmbr.cpc.com.tw/mbwebs/mbwebs/ShowHistoryPrice"
-        r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-        r.encoding = "utf-8"
-        soup = BeautifulSoup(r.text, "html.parser")
-        table = soup.find("table", class_="tablePrice")
-        rows = table.find_all("tr")
-        cols = rows[1].find_all("td")
-        gas_92, gas_95, gas_98, diesel = [cols[i].text.strip() for i in [1,2,3,4]]
+        url = "https://www.cpc.com.tw/GetOilPriceJson.aspx"
+        r = requests.get(url, timeout=8)
+        data = r.json()
+        latest = data[0]  # 最新一筆
+        gas_92 = latest.get("sPrice1", "N/A")
+        gas_95 = latest.get("sPrice2", "N/A")
+        gas_98 = latest.get("sPrice3", "N/A")
+        diesel = latest.get("sPrice4", "N/A")
         return (f"⛽️ 最新油價（中油）\n"
                 f"92: {gas_92} 元\n95: {gas_95} 元\n98: {gas_98} 元\n柴油: {diesel} 元")
     except Exception as e:
-        logging.warning(f"[OIL-CPC-ERR] {e}")
-    try:
-        url = "https://www2.moeaea.gov.tw/oil106/year/YearAverage.aspx"
-        r = requests.get(url, timeout=8)
-        soup = BeautifulSoup(r.text, "html.parser")
-        tbl = soup.find("table")
-        rows = tbl.find_all("tr")[1:2]
-        cols = rows[0].find_all("td")
-        gas_92, gas_95, gas_98, diesel = [cols[i].text.strip() for i in [2,3,4,6]]
-        return (f"⛽️ 最新油價（能源局）\n"
-                f"92: {gas_92} 元\n95: {gas_95} 元\n98: {gas_98} 元\n柴油: {diesel} 元")
-    except Exception as e:
-        logging.warning(f"[OIL-ENB-ERR] {e}")
-    return "⛽️ 油價查詢失敗"
+        logging.warning(f"[OIL-CPC-JSON-ERR] {e}")
+        return "⛽️ 油價查詢失敗（中油 API）"
+
 
 # 行事曆（Google）
 def cal():
