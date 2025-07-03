@@ -278,7 +278,7 @@ def traffic(label):
     waypoints = cfg.get('waypoints', [])
     o_encoded = quote_plus(o)
     d_encoded = quote_plus(d)
-    waypoints_encoded = "|".join(quote_plus(w) for w in waypoints) if waypoints else ""
+    waypoints_encoded = "optimize:false|" + "|".join(quote_plus(w) for w in waypoints) if waypoints else ""
     url = (
         f"https://maps.googleapis.com/maps/api/directions/json?"
         f"origin={o_encoded}&destination={d_encoded}"
