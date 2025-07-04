@@ -287,34 +287,60 @@ def us():
 def traffic(label):
     if label not in ROUTE_CONFIG:
         return f"🚗 找不到路線 {label}"
+
     cfg = ROUTE_CONFIG[label]
     o, d = cfg['o'], cfg['d']
     waypoints = cfg.get('waypoints', [])
+
     o_encoded = quote_plus(o)
     d_encoded = quote_plus(d)
     waypoints_encoded = "optimize:false|" + "|".join(quote_plus(w) for w in waypoints) if waypoints else ""
+
     url = (
         f"https://maps.googleapis.com/maps/api/directions/json?"
         f"origin={o_encoded}&destination={d_encoded}"
         f"{'&waypoints=' + waypoints_encoded if waypoints_encoded else ''}"
-        f"&key={GOOGLE_MAPS_API_KEY}&departure_time=now&language=zh-TW"
+        f"&mode=driving&region=tw&departure_time=now&traffic_model=best_guess&language=zh-TW"
+        f"&key={GOOGLE_MAPS_API_KEY}"
     )
+
     try:
         r = requests.get(url, timeout=8)
         js = r.json()
         routes = js.get("routes", [])
         if not routes:
             return "🚗 路況查詢失敗（無有效路線）"
-        legs = routes[0].get("legs", [])
+
+        route = routes[0]
+        legs = route.get("legs", [])
         if not legs:
             return "🚗 路況查詢失敗（無有效路段）"
-        duration = legs[0].get('duration_in_traffic', legs[0].get('duration', {}))
-        duration_text = duration.get('text', 'N/A')
-        summary = routes[0].get("summary", "")
-        return f"🚗 路線: {summary}\n預估時間: {duration_text}\n來源: Google Maps"
+
+        leg = legs[0]
+        normal_duration = leg.get("duration", {}).get("value", 0)
+        traffic_duration = leg.get("duration_in_traffic", {}).get("value", normal_duration)
+        duration_text = leg.get("duration_in_traffic", leg.get("duration", {})).get("text", 'N/A')
+
+        # 判斷燈號
+        if normal_duration == 0:
+            status = "⚠️ 無法計算時間"
+        else:
+            diff = traffic_duration - normal_duration
+            percent = diff / normal_duration
+            if percent > 0.3:
+                status = "🔴 塞車"
+            elif percent > 0.1:
+                status = "🟠 稍慢"
+            else:
+                status = "🟢 順暢"
+
+        summary = route.get("summary", "")
+        return f"🚗 路線: {summary}\n預估時間: {duration_text}（{status}）\n來源: Google Maps"
+
     except Exception as e:
         logging.warning(f"[TRAFFIC-ERR] {e}")
-    return "🚗 路況查詢失敗"
+        return "🚗 路況查詢失敗"
+
 
 
 # LINE推播
@@ -338,8 +364,7 @@ def morning_briefing():
         us_open_briefing = get_us_opening_summary()  # 今晨開盤摘要
 
         messages = [
-            f"【早安天氣】\n{weather}",
-            f"【今日新聞】\n{news}",
+            f"【早安天氣】\n{wx_info}",
             f"【行事曆提醒】\n{calendar}",
             f"【匯率快訊】\n{fx}",
             f"【昨晚美股行情】\n{us_market_summary}",
@@ -408,16 +433,16 @@ def keep_alive():
     logging.info(f"[Scheduler] 定時喚醒維持運作 {now_tw()}")
 
 def register_jobs():
-    scheduler.add_job(keep_alive, CronTrigger(minute="0,10,20,30,40,50"))
-    scheduler.add_job(morning_briefing, CronTrigger(hour=7, minute=10))
-    scheduler.add_job(commute_to_work, CronTrigger(day_of_week="mon-fri", hour=8, minute=0))
-    scheduler.add_job(market_open, CronTrigger(day_of_week="mon-fri", hour=9, minute=30))
-    scheduler.add_job(market_mid, CronTrigger(day_of_week="mon-fri", hour=12, minute=0))
-    scheduler.add_job(market_close, CronTrigger(day_of_week="mon-fri", hour=13, minute=45))
-    scheduler.add_job(evening_zhongzheng, CronTrigger(day_of_week="mon,wed,fri", hour=18, minute=00))
-    scheduler.add_job(evening_xindian, CronTrigger(day_of_week="tue,thu", hour=18, minute=00))
-    scheduler.add_job(us_market_open1, CronTrigger(day_of_week="mon-fri", hour=21, minute=30))
-    scheduler.add_job(us_market_open2, CronTrigger(day_of_week="mon-fri", hour=23, minute=0))
+    scheduler.add_job(keep_alive, CronTrigger(minute="0,10,20,30,40,50", timezone=TZ))
+    scheduler.add_job(morning_briefing, CronTrigger(hour=7, minute=10, timezone=TZ))
+    scheduler.add_job(commute_to_work, CronTrigger(day_of_week="mon-fri", hour=8, minute=0, timezone=TZ))
+    scheduler.add_job(market_open, CronTrigger(day_of_week="mon-fri", hour=9, minute=30, timezone=TZ))
+    scheduler.add_job(market_mid, CronTrigger(day_of_week="mon-fri", hour=12, minute=0, timezone=TZ))
+    scheduler.add_job(market_close, CronTrigger(day_of_week="mon-fri", hour=13, minute=45, timezone=TZ))
+    scheduler.add_job(evening_zhongzheng, CronTrigger(day_of_week="mon,wed,fri", hour=18, minute=00, timezone=TZ))
+    scheduler.add_job(evening_xindian, CronTrigger(day_of_week="tue,thu", hour=18, minute=00, timezone=TZ))
+    scheduler.add_job(us_market_open1, CronTrigger(day_of_week="mon-fri", hour=21, minute=30, timezone=TZ))
+    scheduler.add_job(us_market_open2, CronTrigger(day_of_week="mon-fri", hour=23, minute=0, timezone=TZ))
 
 register_jobs()
 scheduler.start()
@@ -503,4 +528,3 @@ def send_traffic_test():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
