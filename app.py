@@ -6,6 +6,7 @@ import logging
 import requests
 import yfinance as yf
 import pytz
+import re
 from datetime import datetime
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
@@ -17,6 +18,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
+
 
 # ====== 設定 ======
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -158,19 +160,31 @@ def fx():
 # 油價（中油 → 能源局 備援）
 def get_taiwan_oil_price():
     try:
-        url = "https://www.cpc.com.tw/GetOilPriceJson.aspx"
-        r = requests.get(url, timeout=8)
-        data = r.json()
-        latest = data[0]  # 最新一筆
-        gas_92 = latest.get("sPrice1", "N/A")
-        gas_95 = latest.get("sPrice2", "N/A")
-        gas_98 = latest.get("sPrice3", "N/A")
-        diesel = latest.get("sPrice4", "N/A")
-        return (f"⛽️ 最新油價（中油）\n"
-                f"92: {gas_92} 元\n95: {gas_95} 元\n98: {gas_98} 元\n柴油: {diesel} 元")
+        url = "https://www2.moeaea.gov.tw/oil111/"
+        r = requests.get(url, timeout=10)
+        r.encoding = 'utf-8'  # 明確設定編碼
+        soup = BeautifulSoup(r.text, "lxml")
+        text = soup.get_text()
+
+        def find_price(label):
+            m = re.search(rf"{label}.*?([\d.]+)\s*元", text)
+            return m.group(1) if m else "N/A"
+
+        p92 = find_price("92 無鉛汽油")
+        p95 = find_price("95 無鉛汽油")
+        p98 = find_price("98 無鉛汽油")
+        pd = find_price("超級柴油")
+
+        return (f"⛽️ 最新油價（能源局）\n"
+                f"92: {p92} 元/公升\n"
+                f"95: {p95} 元/公升\n"
+                f"98: {p98} 元/公升\n"
+                f"柴油: {pd} 元/公升")
+
     except Exception as e:
-        logging.warning(f"[OIL-CPC-JSON-ERR] {e}")
-        return "⛽️ 油價查詢失敗（中油 API）"
+        logging.warning(f"[OIL-ENB-TEXT-ERR] {e}")
+        return "⛽️ 油價查詢失敗（能源局）"
+
 
 
 # 行事曆（Google）
