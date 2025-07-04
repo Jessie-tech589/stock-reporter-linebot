@@ -327,14 +327,36 @@ def push(message):
 
 # ========== 定時推播任務 ==========
 def morning_briefing():
-    msg = [
-        "【早安】",
-        weather("新店區", *LOCATION_COORDS["新店區"]),
-        cal(),
-        fx(),
-        us()
-    ]
-    push("\n\n".join(msg))
+    logging.info("[Push] 07:10 Morning briefing 推播開始")
+
+    try:
+        weather = get_weather("中山區")  # 公司所在地
+        news = get_news()
+        calendar = get_today_events()
+        fx = get_exchange_rate()
+        us_market_summary = get_us_market_summary()  # 前一晚美股行情（含大盤＋個股）
+        us_open_briefing = get_us_opening_summary()  # 今晨開盤摘要
+
+        messages = [
+            f"【早安天氣】\n{weather}",
+            f"【今日新聞】\n{news}",
+            f"【行事曆提醒】\n{calendar}",
+            f"【匯率快訊】\n{fx}",
+            f"【昨晚美股行情】\n{us_market_summary}",
+            f"【美股今晨開盤】\n{us_open_briefing}"
+        ]
+
+        for msg in messages:
+            try:
+                line_bot_api.push_message(USER_ID, TextSendMessage(text=msg))
+                time.sleep(5)  # 每則間隔 5 秒，避免觸發 LINE API 速率限制
+            except LineBotApiError as e:
+                logging.error(f"[LinePushError] {e}")
+
+        logging.info("[Push] 07:10 Morning briefing 推播完成")
+    except Exception as e:
+        logging.error(f"[MorningBriefingError] {e}")
+
 
 def commute_to_work():
     msg = [
