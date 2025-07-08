@@ -272,19 +272,40 @@ def traffic(route_name):
         if route.get("waypoints"):
             waypoints_str = "|".join([quote_plus(wp) for wp in route["waypoints"]])
             waypoints_str = f"&waypoints={waypoints_str}"
+
+        # 加入 departure_time 參數以獲取交通狀況下的預計時間
+        departure_time = int(time.time()) # 當前時間戳
+
         url = (f"https://maps.googleapis.com/maps/api/directions/json?"
                f"origin={origin}&destination={destination}"
                f"&key={GOOGLE_MAPS_API_KEY}&mode=driving&language=zh-TW"
-               f"&units=metric{waypoints_str}")
+               f"&units=metric{waypoints_str}"
+               f"&departure_time={departure_time}") # 為獲取交通資訊而添加
+
         response = requests.get(url, timeout=10)
         response.raise_for_status() # 檢查 HTTP 錯誤
         response = response.json()
+
         if response["status"] == "OK" and response["routes"]:
             leg = response["routes"][0]["legs"][0]
             duration_text = leg["duration"]["text"]
             distance_text = leg["distance"]["text"]
             summary = response["routes"][0]["summary"]
-            return (f"🚗 {route_name} 路況：\n"
+
+            # 獲取交通狀況下的預計時間並計算交通狀態
+            duration_in_traffic_seconds = leg.get("duration_in_traffic", {}).get("value")
+            duration_seconds = leg["duration"]["value"]
+
+            traffic_emoji = "🟢" # 綠色：正常交通
+            if duration_in_traffic_seconds is not None and duration_seconds is not None and duration_seconds > 0:
+                traffic_increase_pct = ((duration_in_traffic_seconds - duration_seconds) / duration_seconds) * 100
+                if traffic_increase_pct > 30: # 超過 30% 增加
+                    traffic_emoji = "🔴" # 紅色：嚴重堵塞
+                elif traffic_increase_pct > 10: # 10% 到 30% 增加
+                    traffic_emoji = "🟠" # 橘色：中度堵塞
+                # 如果 traffic_increase_pct <= 10，則保持綠色
+
+            return (f"🚗 {route_name} 路況 {traffic_emoji}：\n"
                     f"摘要: {summary}\n"
                     f"距離: {distance_text}\n"
                     f"預計時間: {duration_text}")
